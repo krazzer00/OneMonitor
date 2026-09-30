@@ -82,9 +82,6 @@ fn round_corners(win: &WebviewWindow) {
 /// Places `win` next to the tray icon (above the taskbar when it is at the bottom),
 /// or in the bottom-right corner of the primary work area when no anchor is known.
 pub fn place_near_tray(app: &AppHandle, win: &WebviewWindow, anchor: Option<Rect>) {
-    let Ok(size) = win.outer_size() else { return };
-    let (w, h) = (size.width as i32, size.height as i32);
-
     let anchor = anchor.map(|r| {
         let p = r.position.to_physical::<f64>(1.0);
         let s = r.size.to_physical::<f64>(1.0);
@@ -99,6 +96,17 @@ pub fn place_near_tray(app: &AppHandle, win: &WebviewWindow, anchor: Option<Rect
     }
     .or_else(|| win.primary_monitor().ok().flatten());
     let Some(monitor) = monitor else { return };
+
+    // A window that has never been shown may still report a 0x0 size;
+    // fall back to its configured logical size.
+    let size = win.outer_size().unwrap_or_default();
+    let (w, h) = if size.width >= 50 && size.height >= 50 {
+        (size.width as i32, size.height as i32)
+    } else {
+        let (lw, lh) = if win.label() == "popup" { (300.0, 180.0) } else { (392.0, 600.0) };
+        let sf = monitor.scale_factor();
+        ((lw * sf) as i32, (lh * sf) as i32)
+    };
 
     let wa = monitor.work_area();
     let (wx, wy) = (wa.position.x, wa.position.y);

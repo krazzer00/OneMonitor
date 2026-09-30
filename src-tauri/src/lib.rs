@@ -431,20 +431,25 @@ struct StateDto {
 #[tauri::command]
 fn get_state(app: AppHandle) -> StateDto {
     let st = state(&app);
-    let dto = StateDto {
+    // Take every lock in its own statement: a guard created inside the struct
+    // literal would live until the end of it, and re-locking the same mutex
+    // there deadlocks the main thread.
+    let settings = st.settings.lock().unwrap().clone();
+    let pinned = st.ui.lock().unwrap().pinned;
+    let effect_active = ui::effect_active(&settings.effect);
+    StateDto {
         snapshots: st.ordered(),
-        settings: st.settings.lock().unwrap().clone(),
+        settings,
         info: AppInfo {
             version: app.package_info().version.to_string(),
             data_dir: st.dir.display().to_string(),
             win11: ui::is_win11(),
-            effect_active: ui::effect_active(&st.settings.lock().unwrap().effect),
+            effect_active,
             autostart: app.autolaunch().is_enabled().unwrap_or(false),
         },
         refreshing: st.refreshing.load(Ordering::SeqCst),
-        pinned: st.ui.lock().unwrap().pinned,
-    };
-    dto
+        pinned,
+    }
 }
 
 #[tauri::command]
@@ -720,8 +725,26 @@ fn quit(app: AppHandle) {
 
 // ---- Entry point ----------------------------------------------------------------------
 
+/// Release builds have no console and abort on panic, so record panics to a file.
+fn install_crash_log(dir: &std::path::Path) {
+    let path = dir.join("crash.log");
+    std::panic::set_hook(Box::new(move |info| {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = writeln!(
+                f,
+                "[{}] OneMonitor {} panic: {info}\n{}",
+                chrono::Utc::now().to_rfc3339(),
+                env!("CARGO_PKG_VERSION"),
+                std::backtrace::Backtrace::force_capture()
+            );
+        }
+    }));
+}
+
 pub fn run() {
     let dir = store::data_dir();
+    install_crash_log(&dir);
     let settings = store::load_settings(&dir);
     let accounts = store::load_accounts(&dir);
     let started_by_autostart = std::env::args().any(|a| a == "--autostart");

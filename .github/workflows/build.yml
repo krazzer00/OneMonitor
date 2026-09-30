@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Publish a GitHub release with this tag (e.g. v0.1.0); the tag is created on main"
+        description: "Publish a GitHub release with this tag (e.g. v0.1.0); the tag is created on the built commit"
         required: false
         default: ""
 
@@ -49,6 +49,6 @@ jobs:
         with:
           tag_name: ${{ inputs.release_tag || github.ref_name }}
           name: OneMonitor ${{ inputs.release_tag || github.ref_name }}
-          target_commitish: ${{ inputs.release_tag && 'main' || github.sha }}
+          target_commitish: ${{ github.sha }}
           files: dist/OneMonitor-portable-win-x64.zip
           generate_release_notes: true

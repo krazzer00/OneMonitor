@@ -111,8 +111,11 @@ svg { display: block; }
   color: var(--text-2);
   font-size: 11.5px;
   white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
   transition: color 0.3s, background 0.3s;
 }
+.pill span { overflow: hidden; text-overflow: ellipsis; }
 
 .dot {
   --c: var(--idle);
