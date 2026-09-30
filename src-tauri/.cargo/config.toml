@@ -1,3 +1,0 @@
-# Link the C runtime statically so the portable .exe runs without the VC++ redistributable.
-[target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
