@@ -1,6 +1,8 @@
 //! OneProvider gateway: liveness probe, public model observations and key balance.
 //! Docs: https://oneprovider.dev/docs/llms.txt (§1, §10.1) and https://oneprovider.dev/status
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use reqwest::Client;
 use serde_json::Value;
 
@@ -9,6 +11,32 @@ use crate::model::{Account, Balance, Component, Service, Snapshot};
 use crate::util::{num, parse_time, Res};
 
 const BASE: &str = "https://api.oneprovider.dev";
+
+/// The docs point the balance endpoint at the API host, but it is currently
+/// served only by the dashboard host (the API host answers 404). Try both and
+/// remember which one answered.
+const BALANCE_URLS: [&str; 2] = [
+    "https://api.oneprovider.dev/v1/dashboard/balance",
+    "https://dashboard.oneprovider.dev/v1/dashboard/balance",
+];
+static BALANCE_HOST: AtomicUsize = AtomicUsize::new(0);
+
+async fn fetch_balance(http: &Client, key: &str) -> Res<Resp> {
+    let first = BALANCE_HOST.load(Ordering::Relaxed) % BALANCE_URLS.len();
+    let mut last = None;
+    for i in 0..BALANCE_URLS.len() {
+        let idx = (first + i) % BALANCE_URLS.len();
+        let resp = send(http.get(BALANCE_URLS[idx]).bearer_auth(key)).await?;
+        // 404/405: the endpoint does not live on this host, try the next one.
+        if resp.status == 404 || resp.status == 405 {
+            last = Some(resp);
+            continue;
+        }
+        BALANCE_HOST.store(idx, Ordering::Relaxed);
+        return Ok(resp);
+    }
+    Ok(last.expect("at least one balance url"))
+}
 
 pub async fn fetch(http: &Client, acc: &Account, snap: &mut Snapshot) -> Res<()> {
     snap.link = Some("https://oneprovider.dev/status".into());
@@ -31,13 +59,7 @@ pub async fn fetch(http: &Client, acc: &Account, snap: &mut Snapshot) -> Res<()>
     );
     let balance = async {
         match &key {
-            Some(k) => Some(
-                send(
-                    http.get(format!("{BASE}/v1/dashboard/balance"))
-                        .bearer_auth(k.trim()),
-                )
-                .await,
-            ),
+            Some(k) => Some(fetch_balance(http, k.trim()).await),
             None => None,
         }
     };
@@ -64,10 +86,22 @@ pub async fn fetch(http: &Client, acc: &Account, snap: &mut Snapshot) -> Res<()>
     match balance {
         Some(Ok(resp)) if resp.ok() => {
             let v = resp.json()?;
+            // Documented field is balance_usd; accept OpenAI credit_summary-style
+            // names too, in case the response shape differs between hosts.
+            let amount = ["balance_usd", "total_available", "balance", "available_usd"]
+                .iter()
+                .find_map(|k| num(v.get(*k)))
+                .ok_or_else(|| {
+                    let keys = v
+                        .as_object()
+                        .map(|o| o.keys().cloned().collect::<Vec<_>>().join(", "))
+                        .unwrap_or_default();
+                    format!("Неизвестный формат ответа баланса (поля: {keys})")
+                })?;
             let expires_at = v.get("expires_at").and_then(parse_time);
             let active = v.get("is_active").and_then(Value::as_bool);
             snap.balance = Some(Balance {
-                amount: num(v.get("balance_usd")).unwrap_or(0.0),
+                amount,
                 currency: "USD".into(),
                 expires_at,
                 active,
@@ -89,6 +123,12 @@ pub async fn fetch(http: &Client, acc: &Account, snap: &mut Snapshot) -> Res<()>
         }
         Some(Ok(resp)) if resp.status == 429 => {
             snap.warning = Some("Слишком частые запросы баланса (лимит 30/мин)".into());
+        }
+        Some(Ok(resp)) if resp.status == 401 || resp.status == 403 => {
+            return Err(format!(
+                "Ключ не принят сервисом баланса: {}",
+                crate::util::api_error(resp.status, &resp.body)
+            ));
         }
         Some(Ok(resp)) => {
             let msg = crate::util::api_error(resp.status, &resp.body);
