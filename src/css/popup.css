@@ -1,0 +1,44 @@
+/* Tray hover popup */
+.pop { position: absolute; inset: 0 0 auto 0; bottom: auto; }
+.pop.in { animation: pop-in 0.26s var(--ease) both; }
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+.pop-head { display: flex; align-items: center; gap: 8px; padding: 11px 12px 8px 13px; }
+.pop-head .logo { width: 17px; height: 17px; }
+.pop-head .name { flex: 1; font: 600 12.5px var(--font-display); }
+.pop-head .pill { height: 20px; font-size: 11px; }
+
+.rows { padding: 0 6px 4px; }
+.prow {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 7px;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background 0.15s;
+  animation: fade-up 0.3s var(--ease) both;
+}
+.prow:hover { background: var(--card-hover); }
+.prow .pi { width: 26px; height: 26px; border-radius: 8px; }
+.prow .pi svg { width: 14px; height: 14px; }
+.prow .who { min-width: 0; }
+.prow .l { font-weight: 500; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prow .s { color: var(--text-3); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prow .v { text-align: right; }
+.prow .v b { display: block; font: 600 13.5px var(--font-display); font-variant-numeric: tabular-nums; }
+.prow .v b.ok { color: var(--text); }
+.prow .v b.warn { color: var(--warn); }
+.prow .v b.error { color: var(--err); }
+.prow .v span { display: block; color: var(--text-3); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.prow .mini { grid-column: 2 / -1; height: 3px; margin-top: -3px; border-radius: 2px; background: rgba(255,255,255,.07); overflow: hidden; }
+.prow .mini i { display: block; height: 100%; border-radius: 2px; background: var(--ok); }
+.prow .mini i.warn { background: var(--warn); }
+.prow .mini i.error { background: var(--err); }
+
+.pop-empty { padding: 6px 14px 12px; color: var(--text-2); font-size: 12px; }
+.pop-foot { display: flex; justify-content: space-between; gap: 8px; padding: 7px 13px 9px; border-top: 1px solid var(--stroke); color: var(--text-3); font-size: 10.5px; }

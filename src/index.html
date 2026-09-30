@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OneMonitor</title>
+    <link rel="stylesheet" href="css/app.css" />
+  </head>
+  <body>
+    <div class="shell" id="shell">
+      <header class="titlebar" data-tauri-drag-region>
+        <div class="brand" data-tauri-drag-region>
+          <span id="logo" data-tauri-drag-region></span>
+          <span class="name" data-tauri-drag-region>OneMonitor</span>
+          <span class="pill" id="overall" data-tauri-drag-region><i class="dot pending"></i><span>Проверка…</span></span>
+        </div>
+        <button class="icon-btn" id="btn-refresh" title="Обновить сейчас"></button>
+        <button class="icon-btn" id="btn-pin" title="Закрепить поверх окон"></button>
+        <button class="icon-btn" id="btn-settings" title="Настройки"></button>
+        <button class="icon-btn close" id="btn-close" title="Свернуть в трей"></button>
+      </header>
+
+      <nav class="tabs">
+        <button class="icon-btn" id="prev" title="Предыдущий аккаунт"></button>
+        <div class="strip" id="strip"><div class="ink" id="ink"></div></div>
+        <button class="icon-btn" id="next" title="Следующий аккаунт"></button>
+      </nav>
+
+      <main class="viewport" id="viewport">
+        <div class="track" id="track"></div>
+      </main>
+
+      <footer class="footer">
+        <div class="pager" id="pager"></div>
+        <span id="updated" class="num"></span>
+      </footer>
+
+      <div class="scrim" id="scrim"></div>
+
+      <section class="sheet" id="sheet" aria-modal="true">
+        <div class="grab"></div>
+        <header>
+          <h3 id="sheet-title"></h3>
+          <button class="icon-btn" id="sheet-close" title="Закрыть"></button>
+        </header>
+        <div class="body" id="sheet-body"></div>
+      </section>
+
+      <div class="dialog" id="dialog" role="dialog"></div>
+      <div class="toast" id="toast"></div>
+    </div>
+    <script type="module" src="js/main.js"></script>
+  </body>
+</html>
