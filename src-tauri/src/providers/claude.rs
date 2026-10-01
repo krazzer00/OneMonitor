@@ -303,21 +303,26 @@ pub async fn fetch(http: &Client, acc: &mut Account, snap: &mut Snapshot) -> Res
     Ok(())
 }
 
-fn limit_name(key: &str) -> (u8, String) {
-    match key {
+/// Display name and order of a usage bucket. The usage endpoint also returns
+/// internal buckets under code names (e.g. `seven_day_iguana`); those mean
+/// nothing to the user and are skipped.
+fn limit_name(key: &str) -> Option<(u8, String)> {
+    Some(match key {
         "five_hour" => (0, "5-часовое окно".into()),
         "seven_day" => (1, "Неделя · все модели".into()),
-        "seven_day_opus" => (2, "Неделя · Opus".into()),
-        "seven_day_sonnet" => (3, "Неделя · Sonnet".into()),
-        "seven_day_oauth_apps" => (4, "Неделя · OAuth-приложения".into()),
+        "seven_day_oauth_apps" => (8, "Неделя · OAuth-приложения".into()),
         other => {
-            let pretty = other
-                .replace("seven_day", "Неделя")
-                .replace("five_hour", "5 ч")
-                .replace('_', " ");
-            (5, pretty)
+            let model = other.strip_prefix("seven_day_")?;
+            let (order, name) = match model {
+                "opus" => (2, "Opus"),
+                "sonnet" => (3, "Sonnet"),
+                "haiku" => (4, "Haiku"),
+                "fable" => (5, "Fable"),
+                _ => return None,
+            };
+            (order, format!("Неделя · {name}"))
         }
-    }
+    })
 }
 
 pub(crate) fn parse_usage(v: &Value, snap: &mut Snapshot) {
@@ -330,7 +335,9 @@ pub(crate) fn parse_usage(v: &Value, snap: &mut Snapshot) {
         let Some(util) = num(val.get("utilization")) else {
             continue;
         };
-        let (order, name) = limit_name(key);
+        let Some((order, name)) = limit_name(key) else {
+            continue;
+        };
         limits.push((
             order,
             Limit {
@@ -365,4 +372,29 @@ pub(crate) fn parse_usage(v: &Value, snap: &mut Snapshot) {
     }
     limits.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.name.cmp(&b.1.name)));
     snap.limits = limits.into_iter().map(|(_, l)| l).collect();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn internal_code_name_buckets_are_hidden() {
+        let mut snap = Snapshot::default();
+        parse_usage(
+            &json!({
+                "five_hour": {"utilization": 20.0, "resets_at": "2026-10-01T12:00:00Z"},
+                "seven_day": {"utilization": 41.0, "resets_at": "2026-10-04T10:00:00Z"},
+                "seven_day_opus": {"utilization": 12.0, "resets_at": null},
+                "seven_day_iguana": {"utilization": 99.0, "resets_at": null},
+                "iguana_necktie": {"utilization": 100.0},
+                "seven_day_oauth_apps": null,
+                "extra_usage": {"is_enabled": false}
+            }),
+            &mut snap,
+        );
+        let names: Vec<_> = snap.limits.iter().map(|l| l.key.as_str()).collect();
+        assert_eq!(names, ["five_hour", "seven_day", "seven_day_opus"]);
+    }
 }
