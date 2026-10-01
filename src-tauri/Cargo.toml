@@ -1,6 +1,6 @@
 [package]
 name = "onemonitor"
-version = "0.2.0"
+version = "0.2.1"
 description = "Tray monitor for OneProvider / OpenRouter status & balance and ChatGPT / Claude / Antigravity subscription limits"
 authors = ["OneMonitor"]
 license = "MIT"
