@@ -65,7 +65,7 @@ cd src-tauri
 cargo xwin build --release --target x86_64-pc-windows-msvc
 ```
 
-GitHub Actions (`.github/workflows/build.yml`) собирает portable-версию на каждый push. Релиз публикуется на тег `v*` или ручным запуском с параметром `release_tag` (Actions → Build portable → Run workflow). Неудачные релизы удаляются ручным запуском `delete-releases.yml`.
+GitHub Actions (`.github/workflows/build.yml`) собирает portable-версию на каждый push. Релиз публикуется на тег `v*` или ручным запуском с параметром `release_tag` (Actions → Build portable → Run workflow). Неудачные релизы удаляются ручным запуском того же workflow с параметром `delete_releases`.
 
 Тесты: `cd src-tauri && cargo test --lib`.
 

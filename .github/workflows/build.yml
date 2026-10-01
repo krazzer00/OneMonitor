@@ -11,12 +11,32 @@ on:
         description: "Publish a GitHub release with this tag (e.g. v0.1.0); the tag is created on the built commit"
         required: false
         default: ""
+      delete_releases:
+        description: "Only delete these releases and their tags (space-separated, e.g. v0.1.0 v0.1.1)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
 
 jobs:
+  delete-releases:
+    if: ${{ inputs.delete_releases }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAGS: ${{ inputs.delete_releases }}
+        run: |
+          for tag in $TAGS; do
+            case "$tag" in v[0-9]*) ;; *) echo "skip invalid tag: $tag"; continue ;; esac
+            gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes \
+              && echo "deleted $tag" || echo "not found: $tag"
+          done
+
   windows:
+    if: ${{ !inputs.delete_releases }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
