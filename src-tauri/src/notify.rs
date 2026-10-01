@@ -87,6 +87,39 @@ pub fn diff(
         }
     }
 
+    // --- model families with problems (gateway status): one alert per incident
+    if settings.notify_service {
+        let first_check = old.map_or(true, |o| o.updated_at == 0);
+        for c in new.service.iter().flat_map(|s| s.components.iter()) {
+            let family = c.name.strip_suffix(" upstream").unwrap_or(&c.name);
+            let key = format!("fam:{}:{}", new.id, c.name);
+            match c.state.as_str() {
+                "down" | "degraded" => {
+                    // already-running incidents at start-up are shown in the panel, not toasted
+                    if fired.insert(key) && !first_check {
+                        out.push(Toast {
+                            title: format!("{name}: перебои у {family}"),
+                            body: if c.state == "down" {
+                                "Последние пробы модели завершились ошибкой".into()
+                            } else {
+                                "Часть последних проб модели неудачна".into()
+                            },
+                        });
+                    }
+                }
+                "ok" => {
+                    if fired.remove(&key) && !first_check {
+                        out.push(Toast {
+                            title: format!("{name}: {family} снова работает"),
+                            body: "Последние пробы успешны".into(),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     // --- availability and errors (only transitions, never on the first check)
     if settings.notify_service {
         if let Some(old) = old.filter(|o| o.updated_at > 0) {
@@ -175,6 +208,31 @@ mod tests {
         assert_eq!(diff(Some(&up), &down, &s, &mut fired).len(), 1);
         assert!(diff(Some(&down), &down, &s, &mut fired).is_empty());
         assert_eq!(diff(Some(&down), &up, &s, &mut fired).len(), 1);
+    }
+
+    #[test]
+    fn family_incident_and_recovery() {
+        use crate::model::Component;
+        let s = Settings::default();
+        let mut fired = HashSet::new();
+        let with = |state: &str| {
+            let mut x = snap();
+            x.service = Some(Service {
+                up: true,
+                components: vec![Component { name: "DeepSeek upstream".into(), state: state.into(), ..Default::default() }],
+                ..Default::default()
+            });
+            x
+        };
+        let (ok, bad) = (with("ok"), with("down"));
+        assert!(diff(None, &bad, &s, &mut fired).is_empty(), "ongoing at start: panel only");
+        assert!(diff(Some(&bad), &bad, &s, &mut fired).is_empty());
+        let t = diff(Some(&bad), &ok, &s, &mut fired);
+        assert_eq!(t.len(), 1);
+        assert!(t[0].title.contains("снова работает"));
+        let t = diff(Some(&ok), &bad, &s, &mut fired);
+        assert_eq!(t.len(), 1);
+        assert!(t[0].title.contains("перебои у DeepSeek"));
     }
 
     #[test]

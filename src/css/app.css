@@ -371,11 +371,16 @@ svg { display: block; }
 .spark path.area { fill: url(#sparkfill); opacity: 0.9; }
 .spark .fail { fill: var(--err); }
 
-.comp { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; margin-top: 10px; }
-.comp .n { color: var(--text-2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.comp { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; margin-top: 4px; }
+.comp .n { color: var(--text); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 7px; }
+.comp .n .dot { width: 6px; height: 6px; box-shadow: none; }
+.comp .st { font-style: normal; font-size: 11px; color: var(--text-3); }
+.comp .st.warn { color: var(--warn); }
+.comp .st.error { color: var(--err); }
 .comp .u { font: 500 11.5px var(--mono); color: var(--text); text-align: right; }
 .comp .series { grid-column: 1 / -1; display: flex; gap: 2px; height: 14px; margin-bottom: 4px; }
-.comp .series i { flex: 1; border-radius: 2px; background: var(--ok); opacity: 0.85; }
+.comp .series { height: 8px; }
+.comp .series i { flex: 1; border-radius: 2px; background: var(--ok); opacity: 0.7; }
 .comp .series i.w { background: var(--warn); }
 .comp .series i.e { background: var(--err); }
 
