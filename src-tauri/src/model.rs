@@ -167,9 +167,14 @@ pub struct Balance {
 #[derive(Serialize, Clone, Debug, Default)]
 pub struct Component {
     pub name: String,
+    /// 30-day rolling uptime as published by the provider.
     pub uptime: f64,
     pub series: Vec<f64>,
     pub last_probe_at: Option<i64>,
+    /// Current state derived from the latest probes: ok | degraded | down | stale | unknown
+    pub state: String,
+    /// Outcome of each recent probe interval, oldest first: true = ok.
+    pub recent: Vec<bool>,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -179,6 +184,8 @@ pub struct Service {
     pub code: Option<u16>,
     pub message: String,
     pub components: Vec<Component>,
+    /// Families with current problems, e.g. ["DeepSeek: сбой", "GLM: перебои"].
+    pub issues: Vec<String>,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]

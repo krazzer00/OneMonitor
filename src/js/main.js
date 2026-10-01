@@ -126,6 +126,10 @@ function listRowHtml(s) {
     if (svc && !svc.up) cls = "error";
     sub = [s.spend ? `сегодня ${money(s.spend.today)}` : "", svc && svc.latency_ms != null ? `${svc.latency_ms} ms` : ""]
       .filter(Boolean).join(" · ");
+    if (svc && svc.up && svc.issues && svc.issues.length) {
+      sub = "перебои: " + svc.issues.map((x) => x.split(":")[0]).join(", ");
+      if (cls === "ok") cls = "warn";
+    }
   } else {
     const top = bindingLimit(s.limits);
     if (top) {
@@ -369,7 +373,8 @@ function gatewayHtml(s) {
   if (s.spend) h += spendHtml(s);
   const svc = s.service;
   if (svc) {
-    const st = svc.up ? (svc.code && svc.code >= 400 && svc.code !== 401 ? "warn" : "ok") : "error";
+    const st = !svc.up ? "error"
+      : (svc.issues && svc.issues.length) || (svc.code && svc.code >= 400 && svc.code !== 401) ? "warn" : "ok";
     h += `<div class="card"><h4>Доступность API <em class="num">${svc.latency_ms != null ? svc.latency_ms + " ms" : ""}</em></h4>
       <div class="svc"><i class="dot ${st}"></i><span class="m" title="${esc(svc.message)}">${esc(svc.message)}</span></div>
       ${sparkline(s.history || [])}
@@ -442,12 +447,28 @@ function sparkline(hist) {
 
 function componentsHtml(list) {
   if (!list.length) return "";
-  return `<div class="comp">${list
+  // (kept inside: module-level consts are not initialised yet on the first render)
+  const FAMILY_STATE = {
+    ok: ["ok", "работает"],
+    degraded: ["warn", "перебои"],
+    down: ["error", "сбой"],
+    stale: ["pending", "нет свежих проб"],
+    unknown: ["pending", "нет данных"],
+  };
+  // problems first, then by name
+  const rank = { down: 0, degraded: 1, stale: 2, unknown: 3, ok: 4 };
+  const sorted = [...list].sort((a, b) => (rank[a.state] ?? 5) - (rank[b.state] ?? 5) || a.name.localeCompare(b.name));
+  return `<div class="section-label" style="margin:12px 0 4px">Модели · последние пробы</div><div class="comp">${sorted
     .map((c) => {
-      const series = (c.series && c.series.length ? c.series : [c.uptime])
-        .map((v) => `<i class="${v < 90 ? "e" : v < 99 ? "w" : ""}" title="${v.toFixed(1)}%"></i>`)
+      const [cls, label] = FAMILY_STATE[c.state] || FAMILY_STATE.unknown;
+      const name = c.name.replace(/ upstream$/, "");
+      const ticks = (c.recent || [])
+        .map((ok) => `<i class="${ok ? "" : "e"}"></i>`)
         .join("");
-      return `<span class="n">${esc(c.name)}</span><span class="u">${c.uptime.toFixed(1)}%</span><div class="series">${series}</div>`;
+      const probed = c.last_probe_at ? ` · проба ${clock(c.last_probe_at)}` : "";
+      return `<span class="n"><i class="dot ${cls}"></i>${esc(name)} <em class="st ${cls}">${label}</em></span>
+        <span class="u" title="Доступность за 30 дней по данным OneProvider${esc(probed)}">${c.uptime.toFixed(1)}%</span>
+        ${ticks ? `<div class="series" title="Последние пробы: зелёный — успешно, красный — ошибка">${ticks}</div>` : ""}`;
     })
     .join("")}</div>`;
 }

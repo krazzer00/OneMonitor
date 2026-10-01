@@ -45,6 +45,11 @@ function row(s) {
     if (svc && !svc.up) vcls = "error";
     sub = svc ? `<span>${svc.up ? "API" : "API недоступен"}${svc.latency_ms != null ? " · " + svc.latency_ms + " ms" : ""}</span>` : "";
     if (s.spend && svc && svc.up) sub = `<span>сегодня ${esc(money(s.spend.today))} · ${svc.latency_ms ?? "—"} ms</span>`;
+    if (svc && svc.up && svc.issues && svc.issues.length) {
+      const names = svc.issues.map((x) => x.split(":")[0]).join(", ");
+      sub = `<span class="iss" title="${esc(svc.issues.join(", "))}">перебои: ${esc(names)}</span>`;
+      if (vcls === "ok") vcls = "warn";
+    }
   } else {
     const top = bindingLimit(s.limits);
     if (top) {

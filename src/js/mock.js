@@ -30,10 +30,10 @@ let settings = {
 
 let snapshots = [
   {
-    id: "a1", kind: "oneprovider", label: "OneProvider", email: null, source: "apikey", state: "ok",
+    id: "a1", kind: "oneprovider", label: "OneProvider", email: null, source: "apikey", state: "warn",
     error: null, updated_at: now() - 14, plan: null,
     balance: { amount: 1317.05, currency: "USD", total: null, used: null, expires_at: now() + 86400 * 89, active: true },
-    warning: null,
+    warning: "Перебои у моделей: DeepSeek: сбой, GLM: перебои",
     spend: {
       currency: "USD", today: 0.38, today_requests: 31, week: 320.1, month: 634.77, forecast_days: 28.8,
       quota_limit: 1820.11, quota_used: 634.77, quota_remaining: 1185.34,
@@ -43,10 +43,14 @@ let snapshots = [
       top_models: [{ name: "deepseek-v4-pro", cost: 276.89, requests: 1348 }, { name: "claude-opus-5-5", cost: 151.2, requests: 402 }, { name: "gpt-6-sol", cost: 64.5, requests: 610 }],
     },
     service: {
-      up: true, latency_ms: 182, code: 200, message: "API работает",
+      up: true, latency_ms: 182, code: 200, message: "API работает · перебои: DeepSeek, GLM",
+      issues: ["DeepSeek: сбой", "GLM: перебои"],
       components: [
-        { name: "Claude", uptime: 99.6, series: [100, 100, 99, 100, 100, 100, 97, 100, 100, 100, 100, 100], last_probe_at: now() - 90 },
-        { name: "GPT", uptime: 98.9, series: [100, 100, 100, 92, 100, 100, 100, 100, 99, 100, 100, 100], last_probe_at: now() - 90 },
+        { name: "Claude upstream", uptime: 92.81, state: "ok", recent: Array(24).fill(true), last_probe_at: now() - 600 },
+        { name: "ChatGPT upstream", uptime: 88.41, state: "ok", recent: Array(24).fill(true), last_probe_at: now() - 500 },
+        { name: "DeepSeek upstream", uptime: 93.93, state: "down", recent: [true, false, false, true, true, true, false, true, false, true, false, true, false, true, true, true, true, false, true, false, false, false, false, false], last_probe_at: now() - 200 },
+        { name: "GLM upstream", uptime: 94.72, state: "degraded", recent: [...Array(23).fill(true), false], last_probe_at: now() - 200 },
+        { name: "Qwen upstream", uptime: 52.12, state: "ok", recent: Array(24).fill(true), last_probe_at: now() - 400 },
       ],
     },
     limits: [], notes: [{ label: "Синхронизация баланса", value: "30.09 16:02" }],

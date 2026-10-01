@@ -81,8 +81,12 @@ pub async fn fetch(http: &Client, acc: &mut Account, snap: &mut Snapshot) -> Res
     let mut service = service_from_probe(&probe, key.is_some());
     if let Ok(resp) = &families {
         if let Ok(v) = resp.json() {
-            service.components = parse_families(&v);
+            service.components = parse_families(&v, crate::util::now());
         }
+    }
+    apply_family_issues(&mut service);
+    if !service.issues.is_empty() {
+        snap.warning = Some(format!("Перебои у моделей: {}", service.issues.join(", ")));
     }
     let service_up = service.up;
     let key_rejected = matches!(&probe, Ok(r) if r.status == 401) && key.is_some();
@@ -283,6 +287,7 @@ fn service_from_probe(probe: &Res<Resp>, has_key: bool) -> Service {
                 code: Some(r.status),
                 message,
                 components: vec![],
+                issues: vec![],
             }
         }
         Err(e) => Service {
@@ -291,11 +296,82 @@ fn service_from_probe(probe: &Res<Resp>, has_key: bool) -> Service {
             code: None,
             message: e.clone(),
             components: vec![],
+            issues: vec![],
         },
     }
 }
 
-fn parse_families(v: &Value) -> Vec<Component> {
+/// Upper bound for how old the last probe of a family may be before its state
+/// is considered unknown.
+const PROBE_STALE_SECS: i64 = 45 * 60;
+
+/// The published `uptime_series` is the cumulative 30-day uptime sampled over
+/// time. Each step therefore reveals the latest probe: a success nudges it up
+/// by about `(100 - U) / n`, a failure drops it by about `U / n`. Steps that
+/// fall by more than half the failure drop count as failed probes.
+fn recent_outcomes(series: &[f64], uptime: f64, samples: f64) -> Vec<bool> {
+    if series.len() < 2 || samples < 1.0 {
+        return vec![];
+    }
+    let fail_drop = (uptime / samples).max(0.004);
+    series
+        .windows(2)
+        .map(|w| w[1] - w[0] > -fail_drop * 0.5)
+        .collect()
+}
+
+fn family_state(recent: &[bool], last_probe_at: Option<i64>, now: i64) -> &'static str {
+    if last_probe_at.is_some_and(|t| now - t > PROBE_STALE_SECS) {
+        return "stale";
+    }
+    if recent.is_empty() {
+        return "unknown";
+    }
+    let tail = &recent[recent.len().saturating_sub(6)..];
+    let last3 = &recent[recent.len().saturating_sub(3)..];
+    if last3.len() == 3 && last3.iter().all(|ok| !ok) {
+        "down"
+    } else if tail.iter().any(|ok| !ok) {
+        "degraded"
+    } else {
+        "ok"
+    }
+}
+
+/// Short family name: "DeepSeek upstream" -> "DeepSeek".
+fn short_name(name: &str) -> &str {
+    name.strip_suffix(" upstream").unwrap_or(name)
+}
+
+/// Summarises family problems into the service message and `issues`.
+fn apply_family_issues(service: &mut Service) {
+    service.issues = service
+        .components
+        .iter()
+        .filter_map(|c| match c.state.as_str() {
+            "down" => Some(format!("{}: сбой", short_name(&c.name))),
+            "degraded" => Some(format!("{}: перебои", short_name(&c.name))),
+            _ => None,
+        })
+        .collect();
+    let all_down = !service.components.is_empty()
+        && service.components.iter().all(|c| c.state == "down");
+    if service.up && !service.issues.is_empty() {
+        let names: Vec<_> = service
+            .components
+            .iter()
+            .filter(|c| c.state == "down" || c.state == "degraded")
+            .map(|c| short_name(&c.name))
+            .collect();
+        service.message = if all_down {
+            "Все модели недоступны".to_owned()
+        } else {
+            format!("{} · перебои: {}", service.message, names.join(", "))
+        };
+    }
+}
+
+fn parse_families(v: &Value, now: i64) -> Vec<Component> {
     let Some(list) = v.get("families").and_then(Value::as_array) else {
         return vec![];
     };
@@ -307,16 +383,22 @@ fn parse_families(v: &Value) -> Vec<Component> {
                 .and_then(Value::as_str)?
                 .to_owned();
             let uptime = num(f.get("uptime_percent"))?.clamp(0.0, 100.0);
-            let series = f
+            let series: Vec<f64> = f
                 .get("uptime_series")
                 .and_then(Value::as_array)
                 .map(|a| a.iter().filter_map(|x| x.as_f64()).collect())
                 .unwrap_or_default();
+            let samples = num(f.get("eligible_samples")).unwrap_or(0.0);
+            let recent = recent_outcomes(&series, uptime, samples);
+            let last_probe_at = f.get("last_probe_at").and_then(parse_time);
+            let state = family_state(&recent, last_probe_at, now).to_owned();
             Some(Component {
                 name,
                 uptime,
                 series,
-                last_probe_at: f.get("last_probe_at").and_then(parse_time),
+                last_probe_at,
+                state,
+                recent,
             })
         })
         .collect()
@@ -466,6 +548,43 @@ mod tests {
         assert_eq!(s.daily[13 - 3].requests, 10);
         assert_eq!(s.top_models.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["pricey", "mid", "cheap"]);
         assert_eq!(s.quota_remaining, Some(60.0));
+    }
+
+    fn family(id: &str, uptime: f64, n: u64, series: &[f64], probe_age: i64, now: i64) -> Value {
+        let t = chrono::DateTime::from_timestamp(now - probe_age, 0).unwrap().to_rfc3339();
+        json!({"id": id, "display_name": format!("{id} upstream"), "uptime_percent": uptime,
+               "eligible_samples": n, "ignored_4xx": 0, "last_probe_at": t, "uptime_series": series})
+    }
+
+    #[test]
+    fn family_state_from_cumulative_series() {
+        let now = 1_800_000_000;
+        // shapes taken from the live endpoint during an incident
+        let falling = [94.35, 94.35, 94.31, 94.27, 94.27, 94.27, 94.28, 94.24, 94.24, 94.2, 94.2,
+            94.16, 94.16, 94.12, 94.12, 94.13, 94.13, 94.13, 94.13, 94.09, 94.09, 94.05, 94.01,
+            93.97, 93.93];
+        let steady = [92.77, 92.78, 92.78, 92.79, 92.79, 92.8, 92.8, 92.81, 92.81];
+        let one_blip = [94.7, 94.71, 94.71, 94.71, 94.72, 94.72, 94.68];
+        let v = json!({"families": [
+            family("deepseek", 93.93, 2207, &falling, 300, now),
+            family("claude", 92.81, 4477, &steady, 300, now),
+            family("glm", 94.72, 2190, &one_blip, 300, now),
+            family("old", 99.0, 1000, &steady, 3 * 3600, now),
+        ]});
+        let comps = parse_families(&v, now);
+        let state = |id: &str| comps.iter().find(|c| c.name.starts_with(id)).unwrap().state.clone();
+        assert_eq!(state("deepseek"), "down", "three failed probes in a row");
+        assert_eq!(state("claude"), "ok");
+        assert_eq!(state("glm"), "degraded", "a recent failed probe");
+        assert_eq!(state("old"), "stale");
+        let ds = comps.iter().find(|c| c.name.starts_with("deepseek")).unwrap();
+        assert_eq!(ds.recent.len(), falling.len() - 1);
+        assert!(!ds.recent[1] && ds.recent[5], "decline = failure, rise = success");
+
+        let mut svc = Service { up: true, message: "API работает".into(), components: comps, ..Default::default() };
+        apply_family_issues(&mut svc);
+        assert_eq!(svc.issues, ["deepseek: сбой", "glm: перебои"]);
+        assert_eq!(svc.message, "API работает · перебои: deepseek, glm");
     }
 
     #[test]

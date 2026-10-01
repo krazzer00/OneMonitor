@@ -100,6 +100,9 @@ pub fn evaluate(snap: &mut Snapshot, settings: &Settings) {
         h = h.max(Health::Warn);
     }
     if let Some(s) = &snap.service {
+        if !s.issues.is_empty() {
+            h = h.max(Health::Warn);
+        }
         if !s.up {
             h = Health::Error;
         }
