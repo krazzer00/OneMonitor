@@ -1,8 +1,10 @@
 name: Build portable (Windows)
 
 on:
+  # Branches with a PR are built once, through pull_request; pushes build
+  # only main and release tags.
   push:
-    branches: ["**"]
+    branches: [main]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
@@ -18,6 +20,12 @@ on:
 
 permissions:
   contents: write
+
+# A newer push supersedes an unfinished build of the same ref; manual release
+# and clean-up runs get their own group and are never cancelled.
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}-${{ inputs.release_tag || inputs.delete_releases || 'ci' }}
+  cancel-in-progress: ${{ !inputs.release_tag && !inputs.delete_releases }}
 
 jobs:
   delete-releases:
