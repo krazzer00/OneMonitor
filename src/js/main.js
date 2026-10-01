@@ -237,6 +237,7 @@ function gatewayHtml(s) {
       <div class="hero"><div><div class="v" data-count="${b.amount}" data-fmt="usd" data-key="${esc(s.id)}-bal">${esc(money(b.amount))}</div>
       ${sub.length ? `<div class="sub">${sub.join(" · ")}</div>` : ""}</div></div></div>`;
   }
+  if (s.spend) h += spendHtml(s);
   const svc = s.service;
   if (svc) {
     const st = svc.up ? (svc.code && svc.code >= 400 && svc.code !== 401 ? "warn" : "ok") : "error";
@@ -246,6 +247,39 @@ function gatewayHtml(s) {
       ${componentsHtml(svc.components || [])}</div>`;
   }
   return h;
+}
+
+function spendHtml(s) {
+  const sp = s.spend;
+  const days = sp.daily || [];
+  const max = Math.max(...days.map((d) => d.cost), 0.0001);
+  const W = 340, H = 46, gap = 3;
+  const bw = days.length ? (W - gap * (days.length - 1)) / days.length : 0;
+  const bars = days
+    .map((d, i) => {
+      const h = d.cost > 0 ? Math.max(2, (d.cost / max) * (H - 2)) : 1;
+      const last = i === days.length - 1;
+      const label = `${d.date.slice(8, 10)}.${d.date.slice(5, 7)}: ${money(d.cost)} · ${d.requests} запр.`;
+      return `<rect class="${last ? "today" : ""}${d.cost > 0 ? "" : " zero"}" x="${(i * (bw + gap)).toFixed(1)}" y="${(H - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="2"><title>${esc(label)}</title></rect>`;
+    })
+    .join("");
+  let forecast = "";
+  if (sp.forecast_days != null) {
+    const d = sp.forecast_days;
+    const txt = d >= 365 ? "больше года" : d >= 1 ? `≈ ${Math.round(d)} дн.` : "меньше суток";
+    const warn = d < 3;
+    forecast = `<div class="forecast${warn ? " warn" : ""}">Баланса хватит на <b>${txt}</b> <span class="muted">при среднем расходе за 7 дней</span></div>`;
+  }
+  const top = (sp.top_models || [])
+    .map((m) => `<dt title="${m.requests} запр.">${esc(m.name)}</dt><dd>${esc(money(m.cost))}</dd>`)
+    .join("");
+  return `<div class="card"><h4>Расход <em class="num">сегодня ${esc(money(sp.today))} · ${sp.today_requests} запр.</em></h4>
+    <svg class="spend" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${bars}</svg>
+    <div class="spend-axis"><span>${days.length ? esc(days[0].date.slice(8, 10) + "." + days[0].date.slice(5, 7)) : ""}</span><span>сегодня</span></div>
+    <div class="spend-sum"><div><span>7 дней</span><b class="num">${esc(money(sp.week))}</b></div><div><span>30 дней</span><b class="num">${esc(money(sp.month))}</b></div>
+    <div><span title="Средний расход за последние 7 дней">В день</span><b class="num">${esc(money(sp.week / 7))}</b></div></div>
+    ${forecast}
+    ${top ? `<div class="section-label" style="margin:12px 0 6px">Топ моделей · всё время</div><dl class="kv">${top}</dl>` : ""}</div>`;
 }
 
 function sparkline(hist) {

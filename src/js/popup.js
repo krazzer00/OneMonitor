@@ -44,6 +44,7 @@ function row(s) {
     }
     if (svc && !svc.up) vcls = "error";
     sub = svc ? `<span>${svc.up ? "API" : "API недоступен"}${svc.latency_ms != null ? " · " + svc.latency_ms + " ms" : ""}</span>` : "";
+    if (s.spend && svc && svc.up) sub = `<span>сегодня ${esc(money(s.spend.today))} · ${svc.latency_ms ?? "—"} ms</span>`;
   } else {
     const top = bindingLimit(s.limits);
     if (top) {

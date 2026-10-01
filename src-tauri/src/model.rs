@@ -175,6 +175,42 @@ pub struct Limit {
     pub detail: Option<String>,
 }
 
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct DayCost {
+    /// YYYY-MM-DD
+    pub date: String,
+    pub cost: f64,
+    pub requests: u64,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct ModelCost {
+    pub name: String,
+    pub cost: f64,
+    pub requests: u64,
+}
+
+/// Spending statistics (OneProvider `/v1/usage`).
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct Spend {
+    pub currency: String,
+    pub today: f64,
+    pub today_requests: u64,
+    pub week: f64,
+    pub month: f64,
+    /// Last 14 calendar days, oldest first, gaps filled with zeros.
+    pub daily: Vec<DayCost>,
+    /// Most expensive models over the whole history.
+    pub top_models: Vec<ModelCost>,
+    /// How many days the balance lasts at the average spend of the last 7 days.
+    pub forecast_days: Option<f64>,
+    /// Quota as reported by the usage endpoint. It is a different metric from
+    /// the real balance (`balance_usd`), so it is not displayed as a balance.
+    pub quota_limit: Option<f64>,
+    pub quota_used: Option<f64>,
+    pub quota_remaining: Option<f64>,
+}
+
 #[derive(Serialize, Clone, Debug)]
 pub struct Note {
     pub label: String,
@@ -204,6 +240,7 @@ pub struct Snapshot {
     pub updated_at: i64,
     pub plan: Option<String>,
     pub balance: Option<Balance>,
+    pub spend: Option<Spend>,
     pub service: Option<Service>,
     pub limits: Vec<Limit>,
     pub notes: Vec<Note>,

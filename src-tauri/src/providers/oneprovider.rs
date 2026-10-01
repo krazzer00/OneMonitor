@@ -7,7 +7,7 @@ use reqwest::Client;
 use serde_json::Value;
 
 use super::{send, Resp};
-use crate::model::{Account, Balance, Component, Service, Snapshot};
+use crate::model::{Account, Balance, Component, DayCost, ModelCost, Service, Snapshot, Spend};
 use crate::util::{num, parse_time, Res};
 
 const BASE: &str = "https://api.oneprovider.dev";
@@ -15,11 +15,12 @@ const BASE: &str = "https://api.oneprovider.dev";
 /// Where the key balance can be read. The documented endpoint has moved between
 /// hosts and at times disappeared (404 everywhere), so try every known location
 /// and remember the one that answered.
-const BALANCE_URLS: [&str; 3] = [
+const BALANCE_URLS: [&str; 2] = [
     "https://api.oneprovider.dev/v1/dashboard/balance",
     "https://dashboard.oneprovider.dev/v1/dashboard/balance",
-    "https://api.oneprovider.dev/v1/usage",
 ];
+/// Per-key usage statistics: quota, daily spend, per-model totals.
+const USAGE_URL: &str = "https://api.oneprovider.dev/v1/usage";
 static BALANCE_HOST: AtomicUsize = AtomicUsize::new(0);
 
 async fn fetch_balance(http: &Client, key: &str) -> Res<Resp> {
@@ -64,7 +65,18 @@ pub async fn fetch(http: &Client, acc: &mut Account, snap: &mut Snapshot) -> Res
             None => None,
         }
     };
-    let (probe, families, balance) = tokio::join!(probe, families, balance);
+    let usage = async {
+        match &key {
+            Some(k) => send(http.get(USAGE_URL).bearer_auth(k.trim()))
+                .await
+                .ok()
+                .filter(Resp::ok)
+                .and_then(|r| r.json().ok()),
+            None => None,
+        }
+    };
+    let (probe, families, balance, usage) = tokio::join!(probe, families, balance, usage);
+    snap.spend = usage.as_ref().map(parse_usage);
 
     let mut service = service_from_probe(&probe, key.is_some());
     if let Ok(resp) = &families {
@@ -155,7 +167,99 @@ pub async fn fetch(http: &Client, acc: &mut Account, snap: &mut Snapshot) -> Res
         }
         None => {}
     }
+
+    if let (Some(spend), Some(b)) = (snap.spend.as_mut(), snap.balance.as_ref()) {
+        let per_day = spend.week / 7.0;
+        if per_day > 0.01 && !b.stale {
+            spend.forecast_days = Some(b.amount / per_day);
+        }
+    }
     Ok(())
+}
+
+/// Cost actually charged for a usage record (falls back to the list price).
+fn cost_of(v: &Value) -> f64 {
+    num(v.get("actual_cost")).or_else(|| num(v.get("cost"))).unwrap_or(0.0)
+}
+
+fn parse_usage(v: &Value) -> Spend {
+    use chrono::{Duration, NaiveDate};
+
+    let mut by_day: std::collections::BTreeMap<NaiveDate, (f64, u64)> = Default::default();
+    for d in v.get("daily_usage").and_then(Value::as_array).into_iter().flatten() {
+        let Some(date) = d
+            .get("date")
+            .and_then(Value::as_str)
+            .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+        else {
+            continue;
+        };
+        let e = by_day.entry(date).or_default();
+        e.0 += cost_of(d);
+        e.1 += d.get("requests").and_then(Value::as_u64).unwrap_or(0);
+    }
+
+    let today = chrono::Local::now().date_naive();
+    let today_v = v.pointer("/usage/today");
+    if let Some(t) = today_v {
+        // the "today" block is fresher than the daily list
+        by_day.insert(
+            today,
+            (cost_of(t), t.get("requests").and_then(Value::as_u64).unwrap_or(0)),
+        );
+    }
+    let sum_since = |days: i64| -> f64 {
+        let from = today - Duration::days(days - 1);
+        by_day.range(from..).map(|(_, (c, _))| c).sum()
+    };
+
+    let daily = (0..14)
+        .rev()
+        .map(|i| {
+            let date = today - Duration::days(i);
+            let (cost, requests) = by_day.get(&date).copied().unwrap_or_default();
+            DayCost {
+                date: date.format("%Y-%m-%d").to_string(),
+                cost,
+                requests,
+            }
+        })
+        .collect();
+
+    let mut top_models: Vec<ModelCost> = v
+        .get("model_stats")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|m| {
+            Some(ModelCost {
+                name: m.get("model").and_then(Value::as_str)?.to_owned(),
+                cost: cost_of(m),
+                requests: m.get("requests").and_then(Value::as_u64).unwrap_or(0),
+            })
+        })
+        .collect();
+    top_models.sort_by(|a, b| b.cost.total_cmp(&a.cost));
+    top_models.truncate(3);
+
+    let (today_cost, today_requests) = by_day.get(&today).copied().unwrap_or_default();
+    Spend {
+        currency: v
+            .get("unit")
+            .and_then(Value::as_str)
+            .unwrap_or("USD")
+            .to_owned(),
+        today: today_cost,
+        today_requests,
+        week: sum_since(7),
+        month: sum_since(30),
+        daily,
+        top_models,
+        forecast_days: None,
+        quota_limit: num(v.pointer("/quota/limit")),
+        quota_used: num(v.pointer("/quota/used")),
+        quota_remaining: num(v.pointer("/quota/remaining")).or_else(|| num(v.get("remaining"))),
+    }
 }
 
 fn service_from_probe(probe: &Res<Resp>, has_key: bool) -> Service {
@@ -330,6 +434,38 @@ mod tests {
         assert!(find_val(&nested, &["expires_at"], 3).and_then(parse_time).is_some());
 
         assert_eq!(find_num(&json!({"input_tokens": 10}), AMOUNT_KEYS, 3), None);
+    }
+
+    #[test]
+    fn parses_usage_statistics() {
+        let today = chrono::Local::now().date_naive();
+        let day = |back: i64| (today - chrono::Duration::days(back)).format("%Y-%m-%d").to_string();
+        let v = json!({
+            "daily_usage": [
+                {"date": day(20), "requests": 5, "cost": 1.0, "actual_cost": 2.0},
+                {"date": day(3), "requests": 10, "cost": 1.0, "actual_cost": 4.0},
+                {"date": day(0), "requests": 1, "cost": 0.1, "actual_cost": 0.2}
+            ],
+            "usage": {"today": {"requests": 31, "cost": 0.07, "actual_cost": 0.38}},
+            "model_stats": [
+                {"model": "cheap", "requests": 1, "actual_cost": 1.0},
+                {"model": "pricey", "requests": 9, "actual_cost": 99.0},
+                {"model": "mid", "requests": 3, "actual_cost": 10.0},
+                {"model": "tiny", "requests": 3, "actual_cost": 0.1}
+            ],
+            "quota": {"limit": 100.0, "used": 40.0, "remaining": 60.0, "unit": "USD"},
+            "unit": "USD"
+        });
+        let s = parse_usage(&v);
+        assert!((s.today - 0.38).abs() < 1e-9, "today block wins over the daily list");
+        assert_eq!(s.today_requests, 31);
+        assert!((s.week - 4.38).abs() < 1e-9);
+        assert!((s.month - 6.38).abs() < 1e-9);
+        assert_eq!(s.daily.len(), 14);
+        assert_eq!(s.daily.last().unwrap().date, day(0));
+        assert_eq!(s.daily[13 - 3].requests, 10);
+        assert_eq!(s.top_models.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["pricey", "mid", "cheap"]);
+        assert_eq!(s.quota_remaining, Some(60.0));
     }
 
     #[test]

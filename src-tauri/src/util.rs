@@ -35,12 +35,22 @@ pub fn jwt_exp(token: &str) -> i64 {
         .unwrap_or(0)
 }
 
-/// Parses an RFC 3339 timestamp into unix seconds.
+/// Parses a timestamp into unix seconds: RFC 3339, or a naive ISO date-time
+/// without an offset (taken as UTC, as OneProvider sends them), or epoch numbers.
 pub fn parse_time(v: &Value) -> Option<i64> {
     match v {
-        Value::String(s) if !s.is_empty() => chrono::DateTime::parse_from_rfc3339(s)
-            .ok()
-            .map(|d| d.timestamp()),
+        Value::String(s) if !s.is_empty() => {
+            let s = s.trim();
+            chrono::DateTime::parse_from_rfc3339(s)
+                .map(|d| d.timestamp())
+                .ok()
+                .or_else(|| {
+                    ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%d %H:%M:%S%.f"]
+                        .iter()
+                        .find_map(|f| chrono::NaiveDateTime::parse_from_str(s, f).ok())
+                        .map(|d| d.and_utc().timestamp())
+                })
+        }
         Value::Number(n) => n.as_f64().map(|f| {
             // treat millisecond timestamps transparently
             if f > 1e12 {
@@ -132,4 +142,20 @@ pub fn fmt_local(t: i64) -> String {
 
 pub fn fmt_usd(v: f64) -> String {
     format!("${v:.2}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parses_offset_naive_and_epoch_times() {
+        assert_eq!(parse_time(&json!("2026-12-30T04:39:32+08:00")), Some(1798576772));
+        // OneProvider's balance endpoint sends naive UTC timestamps
+        assert_eq!(parse_time(&json!("2026-12-29T20:39:32.897380")), Some(1798576772));
+        assert_eq!(parse_time(&json!("2026-12-29 20:39:32")), Some(1798576772));
+        assert_eq!(parse_time(&json!(1798576772000i64)), Some(1798576772));
+        assert_eq!(parse_time(&json!("not a date")), None);
+    }
 }

@@ -23,10 +23,18 @@ let settings = {
 
 let snapshots = [
   {
-    id: "a1", kind: "oneprovider", label: "OneProvider", email: null, source: "apikey", state: "warn",
+    id: "a1", kind: "oneprovider", label: "OneProvider", email: null, source: "apikey", state: "ok",
     error: null, updated_at: now() - 14, plan: null,
-    balance: { amount: 54.77, currency: "USD", total: null, used: null, expires_at: null, active: null, stale: true, as_of: now() - 3600 * 9 },
-    warning: "OneProvider сейчас не отдаёт баланс (эндпоинт отвечает 404 — проблема на их стороне)",
+    balance: { amount: 1317.05, currency: "USD", total: null, used: null, expires_at: now() + 86400 * 89, active: true },
+    warning: null,
+    spend: {
+      currency: "USD", today: 0.38, today_requests: 31, week: 320.1, month: 634.77, forecast_days: 28.8,
+      quota_limit: 1820.11, quota_used: 634.77, quota_remaining: 1185.34,
+      daily: [2.3, 0.78, 1.62, 127.47, 60.16, 40.0, 4.19, 4.74, 301.93, 0.97, 9.09, 0, 3.18, 0.38].map((cost, i) => ({
+        date: new Date(Date.now() - (13 - i) * 86400000).toISOString().slice(0, 10), cost, requests: Math.round(cost * 9) + 3,
+      })),
+      top_models: [{ name: "deepseek-v4-pro", cost: 276.89, requests: 1348 }, { name: "claude-opus-5-5", cost: 151.2, requests: 402 }, { name: "gpt-6-sol", cost: 64.5, requests: 610 }],
+    },
     service: {
       up: true, latency_ms: 182, code: 200, message: "API работает",
       components: [
