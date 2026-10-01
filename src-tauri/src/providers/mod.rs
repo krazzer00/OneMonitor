@@ -63,7 +63,7 @@ pub async fn fetch(http: &Client, acc: Account, settings: &Settings) -> Outcome 
     let before = format!("{:?}{:?}{:?}", acc.secret, acc.meta, acc.email);
     let mut snap = Snapshot::for_account(&acc);
     let result = match acc.kind {
-        Kind::OneProvider => oneprovider::fetch(http, &acc, &mut snap).await,
+        Kind::OneProvider => oneprovider::fetch(http, &mut acc, &mut snap).await,
         Kind::OpenRouter => openrouter::fetch(http, &acc, &mut snap).await,
         Kind::ChatGpt => chatgpt::fetch(http, &mut acc, &mut snap).await,
         Kind::Claude => claude::fetch(http, &mut acc, &mut snap).await,

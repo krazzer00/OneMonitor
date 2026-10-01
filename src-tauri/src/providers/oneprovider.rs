@@ -12,12 +12,13 @@ use crate::util::{num, parse_time, Res};
 
 const BASE: &str = "https://api.oneprovider.dev";
 
-/// The docs point the balance endpoint at the API host, but it is currently
-/// served only by the dashboard host (the API host answers 404). Try both and
-/// remember which one answered.
-const BALANCE_URLS: [&str; 2] = [
+/// Where the key balance can be read. The documented endpoint has moved between
+/// hosts and at times disappeared (404 everywhere), so try every known location
+/// and remember the one that answered.
+const BALANCE_URLS: [&str; 3] = [
     "https://api.oneprovider.dev/v1/dashboard/balance",
     "https://dashboard.oneprovider.dev/v1/dashboard/balance",
+    "https://api.oneprovider.dev/v1/usage",
 ];
 static BALANCE_HOST: AtomicUsize = AtomicUsize::new(0);
 
@@ -27,7 +28,7 @@ async fn fetch_balance(http: &Client, key: &str) -> Res<Resp> {
     for i in 0..BALANCE_URLS.len() {
         let idx = (first + i) % BALANCE_URLS.len();
         let resp = send(http.get(BALANCE_URLS[idx]).bearer_auth(key)).await?;
-        // 404/405: the endpoint does not live on this host, try the next one.
+        // 404/405: the endpoint does not live there (any more), try the next one.
         if resp.status == 404 || resp.status == 405 {
             last = Some(resp);
             continue;
@@ -38,7 +39,7 @@ async fn fetch_balance(http: &Client, key: &str) -> Res<Resp> {
     Ok(last.expect("at least one balance url"))
 }
 
-pub async fn fetch(http: &Client, acc: &Account, snap: &mut Snapshot) -> Res<()> {
+pub async fn fetch(http: &Client, acc: &mut Account, snap: &mut Snapshot) -> Res<()> {
     snap.link = Some("https://oneprovider.dev/status".into());
     let key = acc
         .secret
@@ -86,27 +87,26 @@ pub async fn fetch(http: &Client, acc: &Account, snap: &mut Snapshot) -> Res<()>
     match balance {
         Some(Ok(resp)) if resp.ok() => {
             let v = resp.json()?;
-            // Documented field is balance_usd; accept OpenAI credit_summary-style
-            // names too, in case the response shape differs between hosts.
-            let amount = ["balance_usd", "total_available", "balance", "available_usd"]
-                .iter()
-                .find_map(|k| num(v.get(*k)))
-                .ok_or_else(|| {
-                    let keys = v
-                        .as_object()
-                        .map(|o| o.keys().cloned().collect::<Vec<_>>().join(", "))
-                        .unwrap_or_default();
-                    format!("Неизвестный формат ответа баланса (поля: {keys})")
-                })?;
-            let expires_at = v.get("expires_at").and_then(parse_time);
-            let active = v.get("is_active").and_then(Value::as_bool);
+            let Some(amount) = find_num(&v, AMOUNT_KEYS, 3) else {
+                let keys = v
+                    .as_object()
+                    .map(|o| o.keys().cloned().collect::<Vec<_>>().join(", "))
+                    .unwrap_or_default();
+                snap.warning = Some(format!("Неизвестный формат ответа баланса (поля: {keys})"));
+                restore_last_balance(acc, snap);
+                return Ok(());
+            };
+            let expires_at = find_val(&v, &["expires_at"], 3).and_then(parse_time);
+            let active = find_val(&v, &["is_active", "active"], 3).and_then(Value::as_bool);
             snap.balance = Some(Balance {
                 amount,
                 currency: "USD".into(),
                 expires_at,
                 active,
+                used: find_num(&v, &["used_usd", "total_used", "total_usage", "spent_usd"], 3),
                 ..Default::default()
             });
+            remember_balance(acc, amount);
             if let Some(t) = v.get("last_synced_at").and_then(parse_time) {
                 snap.note("Синхронизация баланса", crate::util::fmt_local(t));
             }
@@ -123,6 +123,7 @@ pub async fn fetch(http: &Client, acc: &Account, snap: &mut Snapshot) -> Res<()>
         }
         Some(Ok(resp)) if resp.status == 429 => {
             snap.warning = Some("Слишком частые запросы баланса (лимит 30/мин)".into());
+            restore_last_balance(acc, snap);
         }
         Some(Ok(resp)) if resp.status == 401 || resp.status == 403 => {
             return Err(format!(
@@ -131,14 +132,21 @@ pub async fn fetch(http: &Client, acc: &Account, snap: &mut Snapshot) -> Res<()>
             ));
         }
         Some(Ok(resp)) => {
-            let msg = crate::util::api_error(resp.status, &resp.body);
+            let msg = if resp.status == 404 {
+                "OneProvider сейчас не отдаёт баланс (эндпоинт отвечает 404 — проблема на их стороне)"
+                    .to_owned()
+            } else {
+                format!("Баланс недоступен: {}", crate::util::api_error(resp.status, &resp.body))
+            };
+            restore_last_balance(acc, snap);
             if service_up {
-                snap.warning = Some(format!("Баланс недоступен: {msg}"));
+                snap.warning = Some(msg);
             } else {
                 return Err(msg);
             }
         }
         Some(Err(e)) => {
+            restore_last_balance(acc, snap);
             if service_up {
                 snap.warning = Some(format!("Баланс недоступен: {e}"));
             } else {
@@ -208,4 +216,135 @@ fn parse_families(v: &Value) -> Vec<Component> {
             })
         })
         .collect()
+}
+
+const AMOUNT_KEYS: &[&str] = &[
+    "balance_usd",
+    "total_available",
+    "available_usd",
+    "remaining_usd",
+    "balance",
+    "remaining",
+    "credits",
+];
+
+/// Breadth-first search for the first of `keys` (in priority order) in `v`,
+/// descending into nested objects up to `depth` levels.
+fn find_val<'a>(v: &'a Value, keys: &[&str], depth: usize) -> Option<&'a Value> {
+    let mut level = vec![v];
+    for _ in 0..=depth {
+        for key in keys {
+            if let Some(found) = level.iter().find_map(|o| o.get(*key).filter(|x| !x.is_null())) {
+                return Some(found);
+            }
+        }
+        level = level
+            .iter()
+            .filter_map(|o| o.as_object())
+            .flat_map(|o| o.values().filter(|x| x.is_object()))
+            .collect();
+        if level.is_empty() {
+            break;
+        }
+    }
+    None
+}
+
+fn find_num(v: &Value, keys: &[&str], depth: usize) -> Option<f64> {
+    let mut level = vec![v];
+    for _ in 0..=depth {
+        for key in keys {
+            if let Some(n) = level.iter().find_map(|o| num(o.get(*key))) {
+                return Some(n);
+            }
+        }
+        level = level
+            .iter()
+            .filter_map(|o| o.as_object())
+            .flat_map(|o| o.values().filter(|x| x.is_object()))
+            .collect();
+        if level.is_empty() {
+            break;
+        }
+    }
+    None
+}
+
+/// Keeps the last successfully read balance in the account metadata so it can
+/// be shown (marked as stale) while the provider's endpoint is unavailable.
+fn remember_balance(acc: &mut Account, amount: f64) {
+    let changed = acc
+        .meta
+        .get("last_balance")
+        .and_then(Value::as_f64)
+        .map_or(true, |old| (old - amount).abs() > 1e-9);
+    let at = acc.meta.get("last_balance_at").and_then(Value::as_i64).unwrap_or(0);
+    // write at most every 30 minutes when the value is unchanged
+    if changed || crate::util::now() - at > 1800 {
+        acc.set_meta("last_balance", amount);
+        acc.set_meta("last_balance_at", crate::util::now());
+    }
+}
+
+fn restore_last_balance(acc: &Account, snap: &mut Snapshot) {
+    let Some(amount) = acc.meta.get("last_balance").and_then(Value::as_f64) else {
+        return;
+    };
+    snap.balance = Some(Balance {
+        amount,
+        currency: "USD".into(),
+        as_of: acc.meta.get("last_balance_at").and_then(Value::as_i64),
+        stale: true,
+        ..Default::default()
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn account() -> Account {
+        Account {
+            id: "t".into(),
+            kind: crate::model::Kind::OneProvider,
+            label: "t".into(),
+            email: None,
+            source: crate::model::Source::ApiKey,
+            meta: Default::default(),
+            created_at: 0,
+            secret: Default::default(),
+        }
+    }
+
+    #[test]
+    fn finds_documented_and_nested_amounts() {
+        let documented = json!({"object": "balance", "balance_usd": 54.77, "is_active": true});
+        assert_eq!(find_num(&documented, AMOUNT_KEYS, 3), Some(54.77));
+
+        let credit_summary = json!({"object": "credit_summary", "total_available": "12.5"});
+        assert_eq!(find_num(&credit_summary, AMOUNT_KEYS, 3), Some(12.5));
+
+        let nested = json!({"data": {"key": {"balance": 3.0, "expires_at": "2026-12-01T00:00:00Z"}}});
+        assert_eq!(find_num(&nested, AMOUNT_KEYS, 3), Some(3.0));
+        assert!(find_val(&nested, &["expires_at"], 3).and_then(parse_time).is_some());
+
+        assert_eq!(find_num(&json!({"input_tokens": 10}), AMOUNT_KEYS, 3), None);
+    }
+
+    #[test]
+    fn keeps_last_known_balance_when_source_fails() {
+        let mut acc = account();
+        let mut snap = Snapshot::for_account(&acc);
+        restore_last_balance(&acc, &mut snap);
+        assert!(snap.balance.is_none(), "nothing to restore yet");
+
+        remember_balance(&mut acc, 54.77);
+        let mut snap = Snapshot::for_account(&acc);
+        restore_last_balance(&acc, &mut snap);
+        let b = snap.balance.expect("restored");
+        assert!(b.stale);
+        assert_eq!(b.amount, 54.77);
+        assert!(b.as_of.is_some());
+    }
 }

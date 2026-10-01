@@ -35,7 +35,7 @@
 
 | Сервис | Доступность | Баланс или лимиты |
 |---|---|---|
-| OneProvider | `GET /v1/models` (latency, код ответа) и `GET /_model_status.json` | `GET /v1/dashboard/balance` ([документация](https://oneprovider.dev/docs/llms.txt), §10.1); сейчас отвечает на `dashboard.oneprovider.dev`, приложение пробует оба хоста |
+| OneProvider | `GET /v1/models` (latency, код ответа) и `GET /_model_status.json` | `GET /v1/dashboard/balance` ([документация](https://oneprovider.dev/docs/llms.txt), §10.1). Эндпоинт у OneProvider переезжал и пропадал, поэтому приложение пробует несколько адресов (`api.`, `dashboard.`, `/v1/usage`), а при сбое показывает последний известный баланс с пометкой «устарел» |
 | OpenRouter | `GET /api/v1/key` (latency, код ответа) | `GET /api/v1/credits`, если недоступно — лимит ключа |
 | ChatGPT | — | `chatgpt.com/backend-api/wham/usage` (тот же эндпоинт, что у `/status` в Codex CLI) |
 | Claude | — | `api.anthropic.com/api/oauth/usage` (данные `/usage` из Claude Code) |

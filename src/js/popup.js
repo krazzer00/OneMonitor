@@ -37,8 +37,8 @@ function row(s) {
   } else if (isGateway(s.kind)) {
     const svc = s.service;
     if (s.balance) {
-      value = money(s.balance.amount);
-      vcls = s.balance.amount < (settings.low_balance ?? 1) ? "warn" : "ok";
+      value = (s.balance.stale ? "≈ " : "") + money(s.balance.amount);
+      vcls = s.balance.stale || s.balance.amount < (settings.low_balance ?? 1) ? "warn" : "ok";
     } else if (svc) {
       value = svc.up ? "Доступен" : "Недоступен";
     }

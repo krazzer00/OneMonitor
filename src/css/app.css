@@ -331,6 +331,7 @@ svg { display: block; }
 .hero .v small { font-size: 18px; color: var(--text-2); margin-left: 1px; }
 .hero .sub { margin-top: 7px; color: var(--text-2); font-size: 12px; }
 .hero .sub b { color: var(--text); font-weight: 500; }
+.card.stale .hero .v { opacity: 0.55; }
 
 .gauge { position: relative; width: 84px; height: 84px; flex: none; }
 .gauge svg { width: 84px; height: 84px; transform: rotate(-90deg); }

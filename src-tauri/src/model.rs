@@ -142,6 +142,10 @@ pub struct Balance {
     pub used: Option<f64>,
     pub expires_at: Option<i64>,
     pub active: Option<bool>,
+    /// When the value was read (set for stale values).
+    pub as_of: Option<i64>,
+    /// Last known value shown while the source is unavailable.
+    pub stale: bool,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]

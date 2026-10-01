@@ -23,9 +23,10 @@ let settings = {
 
 let snapshots = [
   {
-    id: "a1", kind: "oneprovider", label: "OneProvider", email: null, source: "apikey", state: "ok",
-    error: null, warning: null, updated_at: now() - 14, plan: null,
-    balance: { amount: 54.77, currency: "USD", total: null, used: null, expires_at: now() + 86400 * 41, active: true },
+    id: "a1", kind: "oneprovider", label: "OneProvider", email: null, source: "apikey", state: "warn",
+    error: null, updated_at: now() - 14, plan: null,
+    balance: { amount: 54.77, currency: "USD", total: null, used: null, expires_at: null, active: null, stale: true, as_of: now() - 3600 * 9 },
+    warning: "OneProvider сейчас не отдаёт баланс (эндпоинт отвечает 404 — проблема на их стороне)",
     service: {
       up: true, latency_ms: 182, code: 200, message: "API работает",
       components: [

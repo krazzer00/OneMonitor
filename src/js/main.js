@@ -229,7 +229,11 @@ function gatewayHtml(s) {
     if (b.total != null && b.used != null) sub.push(`Потрачено <b>${esc(money(b.used))}</b> из ${esc(money(b.total))}`);
     if (b.expires_at) sub.push(`Ключ до <b>${esc(dateShort(b.expires_at))}</b>`);
     if (b.active === false) sub.push(`<b style="color:var(--warn)">ключ отключён</b>`);
-    h += `<div class="card"><h4>Баланс ${low ? '<em style="color:var(--warn)">мало средств</em>' : ""}</h4>
+    if (b.stale) sub.unshift(b.as_of ? `по данным на <b>${esc(clock(b.as_of))}</b>` : "последнее известное значение");
+    const tag = b.stale
+      ? '<em class="muted">устарел</em>'
+      : low ? '<em style="color:var(--warn)">мало средств</em>' : "";
+    h += `<div class="card${b.stale ? " stale" : ""}"><h4>Баланс ${tag}</h4>
       <div class="hero"><div><div class="v" data-count="${b.amount}" data-fmt="usd" data-key="${esc(s.id)}-bal">${esc(money(b.amount))}</div>
       ${sub.length ? `<div class="sub">${sub.join(" · ")}</div>` : ""}</div></div></div>`;
   }
