@@ -274,6 +274,7 @@ pub(crate) fn parse_models(v: &Value, snap: &mut Snapshot) {
                 resets_at: reset,
                 window_secs: None,
                 detail: Some(names.join(", ")),
+                ..Default::default()
             }
         })
         .collect();

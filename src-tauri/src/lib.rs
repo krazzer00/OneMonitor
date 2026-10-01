@@ -1,11 +1,14 @@
+mod badge;
 mod model;
+mod notify;
 mod oauth;
 mod providers;
 mod store;
 mod ui;
+mod updater;
 mod util;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -17,6 +20,8 @@ use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, Rect, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::{oneshot, Notify};
 
@@ -47,6 +52,18 @@ pub struct AppState {
     refreshing: AtomicBool,
     login_cancel: Mutex<Option<oneshot::Sender<()>>>,
     ui: Mutex<UiState>,
+    /// One-shot notifications already shown (see notify::diff).
+    fired: Mutex<HashSet<String>>,
+    update: Mutex<UpdateInfo>,
+}
+
+#[derive(Serialize, Clone, Default)]
+struct UpdateInfo {
+    available: Option<updater::Release>,
+    checking: bool,
+    installing: bool,
+    error: Option<String>,
+    checked_at: i64,
 }
 
 impl AppState {
@@ -102,15 +119,18 @@ async fn refresh_all(app: &AppHandle) {
     .await;
 
     let mut changed = false;
+    let mut toasts = vec![];
     {
         let mut accounts = st.accounts.lock().unwrap();
         let mut snaps = st.snapshots.lock().unwrap();
         let mut hist = st.history.lock().unwrap();
+        let mut fired = st.fired.lock().unwrap();
         for o in outcomes {
             let id = o.snap.id.clone();
             let Some(current) = accounts.iter_mut().find(|a| a.id == id) else {
                 continue; // removed while refreshing
             };
+            toasts.extend(notify::diff(snaps.get(&id), &o.snap, &settings, &mut fired));
             if let Some(svc) = &o.snap.service {
                 let h = hist.entry(id.clone()).or_default();
                 h.push_back(Probe {
@@ -140,6 +160,13 @@ async fn refresh_all(app: &AppHandle) {
     st.refreshing.store(false, Ordering::SeqCst);
     let _ = app.emit("refreshing", false);
     publish(app);
+    for t in toasts {
+        show_toast(app, &t.title, &t.body);
+    }
+}
+
+fn show_toast(app: &AppHandle, title: &str, body: &str) {
+    let _ = app.notification().builder().title(title).body(body).show();
 }
 
 fn spawn_scheduler(app: AppHandle) {
@@ -216,9 +243,32 @@ fn tooltip(snaps: &[Snapshot]) -> String {
     t
 }
 
+/// Text for the tray badge according to the `tray_badge` setting.
+fn badge_text(mode: &str, snaps: &[Snapshot]) -> Option<String> {
+    match mode {
+        "balance" => snaps
+            .iter()
+            .find_map(|s| s.balance.as_ref())
+            .map(|b| badge::money_text(b.amount)),
+        "limit" => snaps
+            .iter()
+            .flat_map(|s| s.limits.iter())
+            .map(|l| l.used_percent)
+            .max_by(f64::total_cmp)
+            .map(|used| format!("{:.0}", (100.0 - used).max(0.0))),
+        _ => None,
+    }
+}
+
 fn update_tray(app: &AppHandle, snaps: &[Snapshot]) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
-    let _ = tray.set_icon(Some(tray_image(overall(snaps))));
+    let mode = state(app).settings.lock().unwrap().tray_badge.clone();
+    let health = overall(snaps);
+    let icon = match badge_text(&mode, snaps) {
+        Some(text) => Image::new_owned(badge::render(&text, health), badge::SIZE, badge::SIZE),
+        None => tray_image(health),
+    };
+    let _ = tray.set_icon(Some(icon));
     let popup = state(app).settings.lock().unwrap().popup_on_hover;
     // With the hover popup enabled the native tooltip would just overlap it.
     let _ = tray.set_tooltip(if popup { None } else { Some(tooltip(snaps)) });
@@ -416,7 +466,9 @@ struct AppInfo {
     data_dir: String,
     win11: bool,
     effect_active: bool,
+    supported_effects: Vec<&'static str>,
     autostart: bool,
+    dev_build: bool,
 }
 
 #[derive(Serialize)]
@@ -426,25 +478,35 @@ struct StateDto {
     info: AppInfo,
     refreshing: bool,
     pinned: bool,
+    update: UpdateInfo,
 }
 
 #[tauri::command]
 fn get_state(app: AppHandle) -> StateDto {
     let st = state(&app);
-    let dto = StateDto {
+    // Take every lock in its own statement: a guard created inside the struct
+    // literal would live until the end of it, and re-locking the same mutex
+    // there deadlocks the main thread.
+    let settings = st.settings.lock().unwrap().clone();
+    let pinned = st.ui.lock().unwrap().pinned;
+    let update = st.update.lock().unwrap().clone();
+    let effect_active = ui::effect_active(&settings.effect);
+    StateDto {
         snapshots: st.ordered(),
-        settings: st.settings.lock().unwrap().clone(),
+        settings,
         info: AppInfo {
             version: app.package_info().version.to_string(),
             data_dir: st.dir.display().to_string(),
             win11: ui::is_win11(),
-            effect_active: ui::effect_active(&st.settings.lock().unwrap().effect),
+            effect_active,
+            supported_effects: ui::supported_effects(),
             autostart: app.autolaunch().is_enabled().unwrap_or(false),
+            dev_build: updater::is_dev_build(),
         },
         refreshing: st.refreshing.load(Ordering::SeqCst),
-        pinned: st.ui.lock().unwrap().pinned,
-    };
-    dto
+        pinned,
+        update,
+    }
 }
 
 #[tauri::command]
@@ -627,6 +689,8 @@ fn save_settings(app: AppHandle, settings: Settings) -> Res<()> {
     let (effect_changed, interval_changed) = {
         let mut cur = st.settings.lock().unwrap();
         let r = (cur.effect != s.effect, cur.refresh_secs != s.refresh_secs);
+        // the shortcut is changed through set_hotkey (it can fail to register)
+        s.hotkey = cur.hotkey.clone();
         *cur = s.clone();
         r
     };
@@ -689,6 +753,7 @@ fn popup_fit(app: AppHandle, height: f64) {
     let Some(win) = ui::window(&app, "popup") else { return };
     let h = height.clamp(80.0, 640.0).ceil();
     let _ = win.set_size(LogicalSize::new(POPUP_WIDTH, h));
+    ui::clip_rounded(&win);
     if win.is_visible().unwrap_or(false) {
         let rect = state(&app).ui.lock().unwrap().tray_rect;
         ui::place_near_tray(&app, &win, rect);
@@ -718,10 +783,183 @@ fn quit(app: AppHandle) {
     app.exit(0);
 }
 
+// ---- Global shortcut -------------------------------------------------------------------
+
+fn register_hotkey(app: &AppHandle, hotkey: &str) -> Res<()> {
+    let gs = app.global_shortcut();
+    let _ = gs.unregister_all();
+    let hotkey = hotkey.trim();
+    if hotkey.is_empty() {
+        return Ok(());
+    }
+    gs.register(hotkey)
+        .map_err(|e| format!("Не удалось назначить «{hotkey}»: {e}"))
+}
+
+#[tauri::command]
+fn set_hotkey(app: AppHandle, hotkey: String) -> Res<String> {
+    let st = state(&app);
+    let previous = st.settings.lock().unwrap().hotkey.clone();
+    if let Err(e) = register_hotkey(&app, &hotkey) {
+        let _ = register_hotkey(&app, &previous);
+        return Err(e);
+    }
+    let s = {
+        let mut cur = st.settings.lock().unwrap();
+        cur.hotkey = hotkey.trim().to_owned();
+        cur.clone()
+    };
+    store::save_settings(&st.dir, &s)?;
+    let _ = app.emit("settings", &s);
+    Ok(s.hotkey)
+}
+
+// ---- Updates ------------------------------------------------------------------------------
+
+fn emit_update(app: &AppHandle) {
+    let info = state(app).update.lock().unwrap().clone();
+    let _ = app.emit("update", info);
+}
+
+async fn check_update_inner(app: &AppHandle) -> UpdateInfo {
+    let st = state(app);
+    st.update.lock().unwrap().checking = true;
+    emit_update(app);
+    let current = app.package_info().version.to_string();
+    let result = updater::latest(&st.http).await;
+    {
+        let mut u = st.update.lock().unwrap();
+        u.checking = false;
+        u.checked_at = now();
+        match result {
+            Ok(rel) => {
+                u.error = None;
+                u.available = updater::is_newer(&rel.version, &current).then_some(rel);
+            }
+            Err(e) => u.error = Some(e),
+        }
+    }
+    emit_update(app);
+    let info = st.update.lock().unwrap().clone();
+    info
+}
+
+async fn install_update_inner(app: &AppHandle) -> Res<()> {
+    let st = state(app);
+    let rel = {
+        let mut u = st.update.lock().unwrap();
+        if u.installing {
+            return Err("Обновление уже устанавливается".into());
+        }
+        let rel = u.available.clone().ok_or("Нет доступного обновления")?;
+        u.installing = true;
+        u.error = None;
+        rel
+    };
+    emit_update(app);
+    match updater::install(&st.http, &rel).await {
+        Ok(()) => {
+            updater::spawn_restarted(&rel.version)?;
+            app.exit(0);
+            Ok(())
+        }
+        Err(e) => {
+            {
+                let mut u = st.update.lock().unwrap();
+                u.installing = false;
+                u.error = Some(e.clone());
+            }
+            emit_update(app);
+            Err(e)
+        }
+    }
+}
+
+fn spawn_updater(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        loop {
+            let info = check_update_inner(&app).await;
+            let st = state(&app);
+            let auto = st.settings.lock().unwrap().auto_update;
+            let busy = st.login_cancel.lock().unwrap().is_some();
+            if let Some(rel) = &info.available {
+                if auto && !busy && !updater::is_dev_build() {
+                    if let Err(e) = install_update_inner(&app).await {
+                        show_toast(&app, "OneMonitor: обновление не установлено", &e);
+                    }
+                } else if !auto && st.fired.lock().unwrap().insert(format!("upd:{}", rel.version)) {
+                    show_toast(
+                        &app,
+                        "Доступно обновление OneMonitor",
+                        &format!("Версия {} — установить можно в настройках", rel.version),
+                    );
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(6 * 3600)).await;
+        }
+    });
+}
+
+#[tauri::command]
+async fn check_update(app: AppHandle) -> UpdateInfo {
+    check_update_inner(&app).await
+}
+
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Res<()> {
+    install_update_inner(&app).await
+}
+
+/// Lets Windows show toasts of this portable (unregistered) app under its own
+/// name and icon: registers the app user model id the notification plugin uses.
+#[cfg(windows)]
+fn register_toast_identity(app: &AppHandle, dir: &std::path::Path) {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+    let id = app.config().identifier.clone();
+    let icon = dir.join("toast-icon.png");
+    if !icon.exists() {
+        let _ = std::fs::write(&icon, include_bytes!("../icons/128x128.png"));
+    }
+    if let Ok((key, _)) = RegKey::predef(HKEY_CURRENT_USER)
+        .create_subkey(format!(r"Software\Classes\AppUserModelId\{id}"))
+    {
+        let _ = key.set_value("DisplayName", &"OneMonitor");
+        let _ = key.set_value("IconUri", &icon.display().to_string());
+        let _ = key.set_value("IconBackgroundColor", &"FF1C1D22");
+    }
+    let wide: Vec<u16> = id.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(wide.as_ptr());
+    }
+}
+
 // ---- Entry point ----------------------------------------------------------------------
 
+/// Release builds have no console and abort on panic, so record panics to a file.
+fn install_crash_log(dir: &std::path::Path) {
+    let path = dir.join("crash.log");
+    std::panic::set_hook(Box::new(move |info| {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = writeln!(
+                f,
+                "[{}] OneMonitor {} panic: {info}\n{}",
+                chrono::Utc::now().to_rfc3339(),
+                env!("CARGO_PKG_VERSION"),
+                std::backtrace::Backtrace::force_capture()
+            );
+        }
+    }));
+}
+
 pub fn run() {
+    updater::wait_for_previous_instance();
+    updater::cleanup_old();
     let dir = store::data_dir();
+    install_crash_log(&dir);
+    let updated_to = updater::updated_to();
     let settings = store::load_settings(&dir);
     let accounts = store::load_accounts(&dir);
     let started_by_autostart = std::env::args().any(|a| a == "--autostart");
@@ -735,6 +973,16 @@ pub fn run() {
             Some(vec!["--autostart"]),
         ))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() == ShortcutState::Pressed {
+                        toggle_main(app);
+                    }
+                })
+                .build(),
+        )
         .manage(AutostartItem(Mutex::new(None)))
         .manage(AppState {
             dir,
@@ -747,6 +995,8 @@ pub fn run() {
             refreshing: AtomicBool::new(false),
             login_cancel: Mutex::new(None),
             ui: Mutex::new(UiState::default()),
+            fired: Mutex::new(HashSet::new()),
+            update: Mutex::new(UpdateInfo::default()),
         })
         .invoke_handler(tauri::generate_handler![
             get_state,
@@ -768,12 +1018,25 @@ pub fn run() {
             open_url,
             open_data_dir,
             quit,
+            set_hotkey,
+            check_update,
+            install_update,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
+            #[cfg(windows)]
+            register_toast_identity(&handle, &state(&handle).dir);
             apply_styles(&handle);
             build_tray(&handle)?;
             spawn_scheduler(handle.clone());
+            spawn_updater(handle.clone());
+            let hotkey = state(&handle).settings.lock().unwrap().hotkey.clone();
+            if let Err(e) = register_hotkey(&handle, &hotkey) {
+                eprintln!("{e}");
+            }
+            if let Some(v) = &updated_to {
+                show_toast(&handle, "OneMonitor обновлён", &format!("Установлена версия {v}"));
+            }
 
             let no_accounts = state(&handle).accounts.lock().unwrap().is_empty();
             if !started_by_autostart || no_accounts {

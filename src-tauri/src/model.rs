@@ -5,7 +5,6 @@ use serde_json::{Map, Value};
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
     OneProvider,
-    OpenRouter,
     ChatGpt,
     Claude,
     Antigravity,
@@ -15,7 +14,6 @@ impl Kind {
     pub fn title(self) -> &'static str {
         match self {
             Kind::OneProvider => "OneProvider",
-            Kind::OpenRouter => "OpenRouter",
             Kind::ChatGpt => "ChatGPT",
             Kind::Claude => "Claude",
             Kind::Antigravity => "Antigravity",
@@ -23,7 +21,7 @@ impl Kind {
     }
 
     pub fn is_gateway(self) -> bool {
-        matches!(self, Kind::OneProvider | Kind::OpenRouter)
+        matches!(self, Kind::OneProvider)
     }
 }
 
@@ -107,6 +105,17 @@ pub struct Settings {
     /// Used-percent above which a subscription limit is highlighted.
     pub warn_percent: f64,
     pub active_tab: Option<String>,
+    /// Windows notifications (master switch and categories).
+    pub notify: bool,
+    pub notify_balance: bool,
+    pub notify_limits: bool,
+    pub notify_service: bool,
+    /// What the tray icon shows: none | balance | limit
+    pub tray_badge: String,
+    /// Global shortcut that toggles the panel, e.g. "Ctrl+Alt+O"; empty = off.
+    pub hotkey: String,
+    /// Download and install new releases automatically.
+    pub auto_update: bool,
 }
 
 impl Default for Settings {
@@ -120,6 +129,13 @@ impl Default for Settings {
             low_balance: 1.0,
             warn_percent: 85.0,
             active_tab: None,
+            notify: true,
+            notify_balance: true,
+            notify_limits: true,
+            notify_service: true,
+            tray_badge: "none".into(),
+            hotkey: "Ctrl+Alt+O".into(),
+            auto_update: true,
         }
     }
 }
@@ -142,6 +158,10 @@ pub struct Balance {
     pub used: Option<f64>,
     pub expires_at: Option<i64>,
     pub active: Option<bool>,
+    /// When the value was read (set for stale values).
+    pub as_of: Option<i64>,
+    /// Last known value shown while the source is unavailable.
+    pub stale: bool,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -169,6 +189,47 @@ pub struct Limit {
     pub resets_at: Option<i64>,
     pub window_secs: Option<i64>,
     pub detail: Option<String>,
+    /// At the average pace of the current window the limit runs out in this
+    /// many seconds — set only when that happens before the reset.
+    pub eta_secs: Option<i64>,
+    /// The pace was computable and the limit lasts until the reset.
+    pub pace_ok: bool,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct DayCost {
+    /// YYYY-MM-DD
+    pub date: String,
+    pub cost: f64,
+    pub requests: u64,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct ModelCost {
+    pub name: String,
+    pub cost: f64,
+    pub requests: u64,
+}
+
+/// Spending statistics (OneProvider `/v1/usage`).
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct Spend {
+    pub currency: String,
+    pub today: f64,
+    pub today_requests: u64,
+    pub week: f64,
+    pub month: f64,
+    /// Last 14 calendar days, oldest first, gaps filled with zeros.
+    pub daily: Vec<DayCost>,
+    /// Most expensive models over the whole history.
+    pub top_models: Vec<ModelCost>,
+    /// How many days the balance lasts at the average spend of the last 7 days.
+    pub forecast_days: Option<f64>,
+    /// Quota as reported by the usage endpoint. It is a different metric from
+    /// the real balance (`balance_usd`), so it is not displayed as a balance.
+    pub quota_limit: Option<f64>,
+    pub quota_used: Option<f64>,
+    pub quota_remaining: Option<f64>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -200,6 +261,7 @@ pub struct Snapshot {
     pub updated_at: i64,
     pub plan: Option<String>,
     pub balance: Option<Balance>,
+    pub spend: Option<Spend>,
     pub service: Option<Service>,
     pub limits: Vec<Limit>,
     pub notes: Vec<Note>,

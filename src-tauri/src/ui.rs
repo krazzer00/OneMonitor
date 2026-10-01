@@ -2,23 +2,45 @@
 
 use tauri::{AppHandle, Manager, PhysicalPosition, Rect, WebviewWindow};
 
-pub fn is_win11() -> bool {
+fn build() -> u32 {
     #[cfg(windows)]
     {
-        windows_version::OsVersion::current().build >= 22000
+        windows_version::OsVersion::current().build
     }
     #[cfg(not(windows))]
     {
-        false
+        0
     }
 }
 
-/// Whether a backdrop effect is actually applied for this setting.
-/// Effects are Windows 11 only: on Windows 10 they fill the square window
-/// rectangle and would break the rounded CSS corners.
-pub fn effect_active(effect: &str) -> bool {
-    is_win11() && matches!(effect, "acrylic" | "blur" | "mica")
+pub fn is_win11() -> bool {
+    build() >= 22000
 }
+
+/// Effects this Windows version can render: Mica is Windows 11 only, acrylic
+/// needs Windows 10 1809+, blur works on any Windows 10.
+pub fn supported_effects() -> Vec<&'static str> {
+    let b = build();
+    let mut v = vec![];
+    if b >= 10240 {
+        v.push("blur");
+    }
+    if b >= 17763 {
+        v.push("acrylic");
+    }
+    if b >= 22000 {
+        v.push("mica");
+    }
+    v
+}
+
+/// Whether a backdrop effect is actually applied for this setting.
+pub fn effect_active(effect: &str) -> bool {
+    supported_effects().contains(&effect)
+}
+
+/// Corner radius of the CSS shell on Windows 10 (Windows 11 uses DWM's 8 px).
+const W10_RADIUS: f64 = 14.0;
 
 /// Applies the backdrop effect and native rounded corners (Windows 11).
 pub fn apply_style(win: &WebviewWindow, effect: &str) {
@@ -36,15 +58,18 @@ pub fn apply_style(win: &WebviewWindow, effect: &str) {
             match effect {
                 "acrylic" => Some(Effect::Acrylic),
                 "blur" => Some(Effect::Blur),
-                _ => Some(Effect::Mica),
+                _ => Some(Effect::MicaDark),
             }
         };
+        // System backdrops follow the window's light/dark mode: force dark,
+        // otherwise acrylic/mica turn light grey under the dark glass tint.
+        set_dark_mode(win);
         let _ = win.set_effects(None::<WindowEffectsConfig>);
         if let Some(e) = eff {
             let _ = win.set_effects(
                 EffectsBuilder::new()
                     .effect(e)
-                    .color(tauri::window::Color(16, 16, 20, 90))
+                    .color(tauri::window::Color(16, 16, 20, 110))
                     .build(),
             );
         }
@@ -53,11 +78,57 @@ pub fn apply_style(win: &WebviewWindow, effect: &str) {
         let _ = win.set_shadow(w11);
         if w11 {
             round_corners(win);
+        } else {
+            // Windows 10 has no rounded windows: clip the window itself so the
+            // blur does not show in the square corners around the CSS shell.
+            clip_rounded(win);
         }
     }
     #[cfg(not(windows))]
     {
         let _ = (win, effect);
+    }
+}
+
+#[cfg(windows)]
+fn set_dark_mode(win: &WebviewWindow) {
+    use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
+    const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
+    if let Ok(hwnd) = win.hwnd() {
+        let on: i32 = 1;
+        unsafe {
+            DwmSetWindowAttribute(
+                hwnd.0 as _,
+                DWMWA_USE_IMMERSIVE_DARK_MODE,
+                &on as *const i32 as *const _,
+                std::mem::size_of::<i32>() as u32,
+            );
+        }
+    }
+}
+
+/// Clips the window to a rounded rectangle (Windows 10). Call again after resizing.
+pub fn clip_rounded(win: &WebviewWindow) {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Graphics::Gdi::{CreateRoundRectRgn, SetWindowRgn};
+        if is_win11() {
+            return;
+        }
+        let (Ok(hwnd), Ok(size), Ok(scale)) = (win.hwnd(), win.outer_size(), win.scale_factor())
+        else {
+            return;
+        };
+        let d = (W10_RADIUS * 2.0 * scale).round() as i32;
+        unsafe {
+            // the system owns the region after SetWindowRgn succeeds
+            let rgn = CreateRoundRectRgn(0, 0, size.width as i32 + 1, size.height as i32 + 1, d, d);
+            SetWindowRgn(hwnd.0 as _, rgn, 1);
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (win, W10_RADIUS);
     }
 }
 
@@ -82,9 +153,6 @@ fn round_corners(win: &WebviewWindow) {
 /// Places `win` next to the tray icon (above the taskbar when it is at the bottom),
 /// or in the bottom-right corner of the primary work area when no anchor is known.
 pub fn place_near_tray(app: &AppHandle, win: &WebviewWindow, anchor: Option<Rect>) {
-    let Ok(size) = win.outer_size() else { return };
-    let (w, h) = (size.width as i32, size.height as i32);
-
     let anchor = anchor.map(|r| {
         let p = r.position.to_physical::<f64>(1.0);
         let s = r.size.to_physical::<f64>(1.0);
@@ -99,6 +167,17 @@ pub fn place_near_tray(app: &AppHandle, win: &WebviewWindow, anchor: Option<Rect
     }
     .or_else(|| win.primary_monitor().ok().flatten());
     let Some(monitor) = monitor else { return };
+
+    // A window that has never been shown may still report a 0x0 size;
+    // fall back to its configured logical size.
+    let size = win.outer_size().unwrap_or_default();
+    let (w, h) = if size.width >= 50 && size.height >= 50 {
+        (size.width as i32, size.height as i32)
+    } else {
+        let (lw, lh) = if win.label() == "popup" { (300.0, 180.0) } else { (392.0, 600.0) };
+        let sf = monitor.scale_factor();
+        ((lw * sf) as i32, (lh * sf) as i32)
+    };
 
     let wa = monitor.work_area();
     let (wx, wy) = (wa.position.x, wa.position.y);

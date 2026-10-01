@@ -1,6 +1,6 @@
 import {
   api, esc, KINDS, KIND_ORDER, isGateway, pi, ICONS, LOGO, money, clock, dateShort, level,
-  bindingLimit, STATE_TEXT, overall, tick, applyLook, animateIn,
+  bindingLimit, STATE_TEXT, overall, tick, applyLook, animateIn, until,
 } from "./shared.js";
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -14,6 +14,8 @@ const S = {
   refreshing: false,
   pinned: false,
   loginKind: null,
+  update: {},
+  compact: false,
 };
 
 const store = {
@@ -27,6 +29,7 @@ $("#logo").innerHTML = LOGO;
 $("#btn-refresh").innerHTML = ICONS.refresh;
 $("#btn-pin").innerHTML = ICONS.pin;
 $("#btn-settings").innerHTML = ICONS.gear;
+$("#btn-view").innerHTML = ICONS.list;
 $("#btn-close").innerHTML = ICONS.close;
 $("#prev").innerHTML = ICONS.left;
 $("#next").innerHTML = ICONS.right;
@@ -38,6 +41,8 @@ S.settings = initial.settings;
 S.info = initial.info;
 S.refreshing = initial.refreshing;
 S.pinned = initial.pinned;
+S.update = initial.update || {};
+S.compact = store.get("compact") === "1";
 applyLook(S.settings, S.info);
 
 const savedTab = store.get("tab");
@@ -46,6 +51,8 @@ render();
 goTo(S.idx, true);
 setRefreshing(S.refreshing);
 setPinned(S.pinned, false);
+setCompact(S.compact);
+renderUpdateBanner();
 $("#shell").classList.add("enter");
 
 api.listen("snapshots", (snaps) => {
@@ -56,6 +63,11 @@ api.listen("snapshots", (snaps) => {
   goTo(i >= 0 ? i : Math.min(S.idx, pageIds().length - 1), true);
 });
 api.listen("refreshing", setRefreshing);
+api.listen("update", (u) => {
+  S.update = u;
+  renderUpdateBanner();
+  renderUpdateRow();
+});
 api.listen("settings", (s) => {
   S.settings = s;
   applyLook(S.settings, S.info);
@@ -92,13 +104,130 @@ function render() {
   renderOverall();
   renderTabs();
   renderPages();
+  renderList();
   renderUpdated();
+}
+
+// ------------------------------------------------------------ compact list
+
+function listRowHtml(s) {
+  const k = KINDS[s.kind] || { title: s.kind };
+  let value = "…", cls = "ok", sub = "", bar = null;
+  if (s.error) {
+    value = "Ошибка"; cls = "error"; sub = s.error;
+  } else if (!s.updated_at) {
+    sub = "проверка";
+  } else if (isGateway(s.kind)) {
+    const svc = s.service;
+    if (s.balance) {
+      value = (s.balance.stale ? "≈ " : "") + money(s.balance.amount);
+      cls = s.balance.stale || s.balance.amount < (S.settings.low_balance ?? 1) ? "warn" : "ok";
+    } else if (svc) value = svc.up ? "Доступен" : "Недоступен";
+    if (svc && !svc.up) cls = "error";
+    sub = [s.spend ? `сегодня ${money(s.spend.today)}` : "", svc && svc.latency_ms != null ? `${svc.latency_ms} ms` : ""]
+      .filter(Boolean).join(" · ");
+  } else {
+    const top = bindingLimit(s.limits);
+    if (top) {
+      value = Math.round(Math.max(0, 100 - top.used_percent)) + "%";
+      cls = level(top.used_percent, S.settings.warn_percent ?? 85);
+      sub = top.resets_at ? "сброс " + until(top.resets_at) : top.name;
+      bar = { w: top.used_percent, cls };
+    } else value = "—";
+  }
+  const who = s.email && s.email !== s.label
+    ? s.email
+    : s.label === k.title || s.label.startsWith(k.title + " ")
+      ? (isGateway(s.kind) ? "Шлюз" : s.plan || k.title)
+      : [k.title, s.plan].filter(Boolean).join(" · ");
+  return `<button class="lrow" data-id="${esc(s.id)}">${pi(s.kind)}
+    <span class="who"><span class="l">${esc(s.label)}</span><span class="s">${esc(who)}</span></span>
+    <span class="v"><b class="${cls}">${esc(value)}</b><span title="${esc(sub)}">${esc(sub)}</span></span>
+    ${bar ? `<span class="mini"><i class="${bar.cls}" style="width:${bar.w.toFixed(1)}%"></i></span>` : ""}</button>`;
+}
+
+function renderList() {
+  const list = $("#list");
+  const html = S.snaps.length
+    ? S.snaps.map(listRowHtml).join("")
+    : `<div class="empty-note" style="padding:24px">Аккаунтов пока нет</div>`;
+  if (list.dataset.html === html) return;
+  list.dataset.html = html;
+  list.innerHTML = html;
+  $$(".lrow", list).forEach((r) =>
+    r.addEventListener("click", () => {
+      setCompact(false);
+      const i = pageIds().indexOf(r.dataset.id);
+      if (i >= 0) goTo(i);
+    }),
+  );
+}
+
+function setCompact(v) {
+  S.compact = v;
+  store.set("compact", v ? "1" : "0");
+  $("#shell").classList.toggle("compact", v);
+  $("#btn-view").innerHTML = v ? ICONS.cards : ICONS.list;
+  $("#btn-view").title = v ? "Вкладки" : "Все аккаунты списком";
+  if (!v) requestAnimationFrame(() => moveInk(true));
+}
+
+// ------------------------------------------------------------ updates
+
+function renderUpdateBanner() {
+  const el = $("#update-banner");
+  const u = S.update || {};
+  if (!u.available) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  el.innerHTML = u.installing
+    ? `<div class="ring-spin sm"></div><span>Устанавливается OneMonitor ${esc(u.available.version)}…</span>`
+    : `${ICONS.download}<span>Доступна версия <b>${esc(u.available.version)}</b></span>
+       <button class="btn sm" id="upd-now">Обновить</button>`;
+  $("#upd-now", el)?.addEventListener("click", installUpdate);
+}
+
+function installUpdate() {
+  S.update = { ...S.update, installing: true };
+  renderUpdateBanner();
+  renderUpdateRow();
+  api.invoke("install_update").catch((e) => {
+    S.update = { ...S.update, installing: false, error: String(e) };
+    renderUpdateBanner();
+    renderUpdateRow();
+    toast(e);
+  });
+}
+
+function updateStatusText() {
+  const u = S.update || {};
+  if (S.info.dev_build) return "Сборка из исходников — автообновление отключено";
+  if (u.checking) return "Проверка…";
+  if (u.installing) return "Установка…";
+  if (u.error) return "Ошибка: " + u.error;
+  if (u.available) return `Доступна версия ${u.available.version}`;
+  if (u.checked_at) return "Установлена последняя версия";
+  return "Ещё не проверялось";
+}
+
+function renderUpdateRow() {
+  const row = $("#set-update-status");
+  if (!row) return;
+  row.textContent = updateStatusText();
+  const btn = $("#set-update-btn");
+  if (btn) {
+    btn.innerHTML = S.update.available ? `${ICONS.download}Установить` : `${ICONS.refresh}Проверить`;
+    btn.disabled = !!(S.update.checking || S.update.installing);
+  }
 }
 
 function renderOverall() {
   const o = overall(S.snaps);
   const pill = $("#overall");
-  pill.innerHTML = `<i class="dot ${o === "none" ? "pending" : o}"></i><span>${STATE_TEXT[o]}</span>`;
+  pill.innerHTML = `<i class="dot ${o === "none" ? "pending" : o}"></i>`;
+  pill.title = STATE_TEXT[o];
   pill.firstElementChild.style.animation = o === "none" ? "none" : "";
 }
 
@@ -229,10 +358,15 @@ function gatewayHtml(s) {
     if (b.total != null && b.used != null) sub.push(`Потрачено <b>${esc(money(b.used))}</b> из ${esc(money(b.total))}`);
     if (b.expires_at) sub.push(`Ключ до <b>${esc(dateShort(b.expires_at))}</b>`);
     if (b.active === false) sub.push(`<b style="color:var(--warn)">ключ отключён</b>`);
-    h += `<div class="card"><h4>Баланс ${low ? '<em style="color:var(--warn)">мало средств</em>' : ""}</h4>
+    if (b.stale) sub.unshift(b.as_of ? `по данным на <b>${esc(clock(b.as_of))}</b>` : "последнее известное значение");
+    const tag = b.stale
+      ? '<em class="muted">устарел</em>'
+      : low ? '<em style="color:var(--warn)">мало средств</em>' : "";
+    h += `<div class="card${b.stale ? " stale" : ""}"><h4>Баланс ${tag}</h4>
       <div class="hero"><div><div class="v" data-count="${b.amount}" data-fmt="usd" data-key="${esc(s.id)}-bal">${esc(money(b.amount))}</div>
       ${sub.length ? `<div class="sub">${sub.join(" · ")}</div>` : ""}</div></div></div>`;
   }
+  if (s.spend) h += spendHtml(s);
   const svc = s.service;
   if (svc) {
     const st = svc.up ? (svc.code && svc.code >= 400 && svc.code !== 401 ? "warn" : "ok") : "error";
@@ -242,6 +376,39 @@ function gatewayHtml(s) {
       ${componentsHtml(svc.components || [])}</div>`;
   }
   return h;
+}
+
+function spendHtml(s) {
+  const sp = s.spend;
+  const days = sp.daily || [];
+  const max = Math.max(...days.map((d) => d.cost), 0.0001);
+  const W = 340, H = 46, gap = 3;
+  const bw = days.length ? (W - gap * (days.length - 1)) / days.length : 0;
+  const bars = days
+    .map((d, i) => {
+      const h = d.cost > 0 ? Math.max(2, (d.cost / max) * (H - 2)) : 1;
+      const last = i === days.length - 1;
+      const label = `${d.date.slice(8, 10)}.${d.date.slice(5, 7)}: ${money(d.cost)} · ${d.requests} запр.`;
+      return `<rect class="${last ? "today" : ""}${d.cost > 0 ? "" : " zero"}" x="${(i * (bw + gap)).toFixed(1)}" y="${(H - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="2"><title>${esc(label)}</title></rect>`;
+    })
+    .join("");
+  let forecast = "";
+  if (sp.forecast_days != null) {
+    const d = sp.forecast_days;
+    const txt = d >= 365 ? "больше года" : d >= 1 ? `≈ ${Math.round(d)} дн.` : "меньше суток";
+    const warn = d < 3;
+    forecast = `<div class="forecast${warn ? " warn" : ""}">Баланса хватит на <b>${txt}</b> <span class="muted">при среднем расходе за 7 дней</span></div>`;
+  }
+  const top = (sp.top_models || [])
+    .map((m) => `<dt title="${m.requests} запр.">${esc(m.name)}</dt><dd>${esc(money(m.cost))}</dd>`)
+    .join("");
+  return `<div class="card"><h4>Расход <em class="num">сегодня ${esc(money(sp.today))} · ${sp.today_requests} запр.</em></h4>
+    <svg class="spend" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${bars}</svg>
+    <div class="spend-axis"><span>${days.length ? esc(days[0].date.slice(8, 10) + "." + days[0].date.slice(5, 7)) : ""}</span><span>сегодня</span></div>
+    <div class="spend-sum"><div><span>7 дней</span><b class="num">${esc(money(sp.week))}</b></div><div><span>30 дней</span><b class="num">${esc(money(sp.month))}</b></div>
+    <div><span title="Средний расход за последние 7 дней">В день</span><b class="num">${esc(money(sp.week / 7))}</b></div></div>
+    ${forecast}
+    ${top ? `<div class="section-label" style="margin:12px 0 6px">Топ моделей · всё время</div><dl class="kv">${top}</dl>` : ""}</div>`;
 }
 
 function sparkline(hist) {
@@ -302,6 +469,7 @@ function limitsHtml(s) {
       <div class="c"><div><b data-count="${left}" data-fmt="pct" data-key="${esc(s.id)}-g">${Math.round(left)}%</b><span>осталось</span></div></div></div>
     <div class="meta"><div class="n">${esc(top.name)}</div>
       ${top.resets_at ? `<div class="r">Сброс <b data-until="${top.resets_at}"></b></div><div class="r">${esc(clock(top.resets_at))}</div>` : `<div class="r">Время сброса неизвестно</div>`}
+      ${paceHtml(s, top)}
     </div></div></div>`;
 
   h += `<div class="card"><h4>Лимиты</h4>${limits
@@ -313,10 +481,20 @@ function limitsHtml(s) {
         <div class="bar"><i class="${lv}" data-bar="${esc(s.id + ":" + l.key)}" data-to="${l.used_percent.toFixed(2)}"></i></div>
         <div class="r"><span>Использовано ${Math.round(l.used_percent)}%</span>
         ${l.resets_at ? `<span>сброс <b data-until="${l.resets_at}"></b> · ${esc(clock(l.resets_at))}</span>` : ""}</div>
+        ${paceHtml(s, l)}
         ${l.detail ? `<div class="d">${esc(l.detail)}</div>` : ""}</div>`;
     })
     .join("")}</div>`;
   return h;
+}
+
+/** "At the current pace runs out in ~25 min" / "lasts until the reset". */
+function paceHtml(s, l) {
+  if (l.eta_secs != null && s.updated_at) {
+    return `<div class="pace warn">При текущем темпе закончится <b data-until="${s.updated_at + l.eta_secs}"></b></div>`;
+  }
+  if (l.pace_ok) return `<div class="pace">Темпа хватит до сброса</div>`;
+  return "";
 }
 
 function addPageHtml() {
@@ -485,6 +663,7 @@ $("#btn-refresh").addEventListener("click", refresh);
 $("#btn-pin").addEventListener("click", () => setPinned(!S.pinned));
 $("#btn-close").addEventListener("click", () => api.invoke("hide_main"));
 $("#btn-settings").addEventListener("click", openSettings);
+$("#btn-view").addEventListener("click", () => setCompact(!S.compact));
 
 // ============================================================ overlays
 
@@ -656,37 +835,84 @@ function sw(id, checked) {
   return `<label class="switch"><input type="checkbox" id="${id}" ${checked ? "checked" : ""}/><i></i></label>`;
 }
 
+function hotkeyFromEvent(e) {
+  const k = e.key;
+  if (["Control", "Shift", "Alt", "Meta"].includes(k)) return null;
+  const mods = [];
+  if (e.ctrlKey) mods.push("Ctrl");
+  if (e.altKey) mods.push("Alt");
+  if (e.shiftKey) mods.push("Shift");
+  if (e.metaKey) mods.push("Super");
+  if (!mods.length) return null;
+  let key = e.code.startsWith("Key") ? e.code.slice(3)
+    : e.code.startsWith("Digit") ? e.code.slice(5)
+    : /^F\d+$/.test(e.code) ? e.code
+    : { Space: "Space", Backquote: "`", Minus: "-", Equal: "=", Comma: ",", Period: "." }[e.code];
+  if (!key) return null;
+  return [...mods, key].join("+");
+}
+
 function openSettings() {
   const s = S.settings;
-  const w11 = S.info.win11;
+  const sup = S.info.supported_effects || [];
+  const fxNote = sup.includes("mica") ? "" : sup.length
+    ? '<span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">· Mica — только Windows 11</span>'
+    : '<span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">· эффекты недоступны</span>';
   openSheet(
     "Настройки",
     `<div class="row"><div class="t"><b>Запуск вместе с Windows</b><span>Автозапуск в трей</span></div>${sw("set-autostart", S.info.autostart)}</div>
      <div class="row"><div class="t"><b>Сводка при наведении</b><span>Мини-окно над иконкой в трее</span></div>${sw("set-popup", s.popup_on_hover)}</div>
      <div class="row"><div class="t"><b>Скрывать при потере фокуса</b><span>Панель прячется, как системные меню</span></div>${sw("set-blur", s.hide_on_blur)}</div>
-     <div class="section-label">Обновление</div>
+     <div class="row"><div class="t"><b>Горячая клавиша</b><span>Открыть / скрыть панель</span></div>
+       <button class="btn hotkey" id="set-hotkey">${esc(s.hotkey || "Не задана")}</button></div>
+
+     <div class="section-label">Иконка в трее</div>
+     ${seg("set-badge", [["none", "Значок"], ["balance", "Баланс"], ["limit", "Остаток лимита"]], s.tray_badge || "none")}
+
+     <div class="section-label">Обновление данных</div>
      ${seg("set-interval", [[60, "1 мин"], [120, "2 мин"], [300, "5 мин"], [600, "10 мин"], [1800, "30 мин"]], s.refresh_secs)}
-     <div class="section-label">Стекло ${w11 ? "" : '<span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">· эффекты — только Windows 11</span>'}</div>
+
+     <div class="section-label">Стекло ${fxNote}</div>
      ${seg("set-effect", [["acrylic", "Acrylic"], ["blur", "Blur"], ["mica", "Mica"], ["none", "Нет"]], s.effect)}
      <div class="field" style="margin-top:12px"><label>Затемнение <span class="muted" id="tint-v">${Math.round(s.tint * 100)}%</span></label>
        <input type="range" id="set-tint" min="20" max="95" value="${Math.round(s.tint * 100)}" /></div>
+
+     <div class="section-label">Уведомления</div>
+     <div class="row"><div class="t"><b>Уведомления Windows</b><span>Всплывающие сообщения о важных событиях</span></div>${sw("set-notify", s.notify)}</div>
+     <div class="row sub"><div class="t"><b>Мало средств</b><span>Баланс ниже порога</span></div>${sw("set-n-balance", s.notify_balance)}</div>
+     <div class="row sub"><div class="t"><b>Лимиты подписок</b><span>Почти исчерпан и сброс лимита</span></div>${sw("set-n-limits", s.notify_limits)}</div>
+     <div class="row sub"><div class="t"><b>Доступность и ошибки</b><span>API упал или снова работает</span></div>${sw("set-n-service", s.notify_service)}</div>
+
      <div class="section-label">Пороги</div>
-     <div class="row"><div class="t"><b>Низкий баланс</b><span>Подсветка шлюза, если меньше</span></div>
+     <div class="row"><div class="t"><b>Низкий баланс</b><span>Подсветка и уведомление, если меньше</span></div>
        <input class="input num" id="set-low" type="number" min="0" step="0.5" value="${s.low_balance}" style="width:90px;text-align:right" /></div>
      <div class="field" style="margin-top:10px"><label>Предупреждать, когда лимит израсходован на <span class="muted" id="warn-v">${Math.round(s.warn_percent)}%</span></label>
        <input type="range" id="set-warn" min="50" max="100" value="${Math.round(s.warn_percent)}" /></div>
+
+     <div class="section-label">Обновления</div>
+     <div class="row"><div class="t" style="min-width:0"><b>OneMonitor ${esc(S.info.version)}</b><span id="set-update-status">${esc(updateStatusText())}</span></div>
+       <button class="btn" id="set-update-btn"></button></div>
+     <div class="row"><div class="t"><b>Устанавливать автоматически</b><span>Проверка раз в 6 часов, затем перезапуск</span></div>${sw("set-auto-update", s.auto_update)}</div>
+
      <div class="section-label">Данные</div>
      <div class="row"><div class="t" style="min-width:0"><b>Папка данных</b><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(S.info.data_dir)}">${esc(S.info.data_dir)}</span></div>
        <button class="btn" id="set-folder">${ICONS.folder}Открыть</button></div>
-     <div class="row"><div class="t"><b>OneMonitor ${esc(S.info.version)}</b><span>Портативная версия</span></div>
+     <div class="row"><div class="t"><b>Выход</b><span>Закрыть OneMonitor полностью</span></div>
        <button class="btn danger" id="set-quit">${ICONS.power}Выход</button></div>`,
     (b) => {
       requestAnimationFrame(() => $$(".seg", b).forEach(placeSegInk));
+      // effects this Windows cannot render are shown disabled
+      $$("#set-effect button", b).forEach((btn) => {
+        if (btn.dataset.v !== "none" && !sup.includes(btn.dataset.v)) btn.disabled = true;
+      });
       const save = (patch) => {
         S.settings = { ...S.settings, ...patch };
         applyLook(S.settings, S.info);
         api.invoke("save_settings", { settings: S.settings }).catch(toast);
       };
+      const syncNotify = () =>
+        $$(".row.sub", b).forEach((r) => r.classList.toggle("off", !S.settings.notify));
+      syncNotify();
       $("#set-autostart", b).addEventListener("change", (e) =>
         api.invoke("set_autostart", { enabled: e.target.checked })
           .then((v) => { S.info.autostart = v; e.target.checked = v; })
@@ -694,13 +920,20 @@ function openSettings() {
       );
       $("#set-popup", b).addEventListener("change", (e) => save({ popup_on_hover: e.target.checked }));
       $("#set-blur", b).addEventListener("change", (e) => save({ hide_on_blur: e.target.checked }));
+      $("#set-notify", b).addEventListener("change", (e) => { save({ notify: e.target.checked }); syncNotify(); });
+      $("#set-n-balance", b).addEventListener("change", (e) => save({ notify_balance: e.target.checked }));
+      $("#set-n-limits", b).addEventListener("change", (e) => save({ notify_limits: e.target.checked }));
+      $("#set-n-service", b).addEventListener("change", (e) => save({ notify_service: e.target.checked }));
+      $("#set-auto-update", b).addEventListener("change", (e) => save({ auto_update: e.target.checked }));
       $$(".seg", b).forEach((el) =>
         $$("button", el).forEach((btn) =>
           btn.addEventListener("click", () => {
+            if (btn.disabled) return;
             $$("button", el).forEach((x) => x.classList.toggle("on", x === btn));
             placeSegInk(el);
             if (el.id === "set-interval") save({ refresh_secs: +btn.dataset.v });
             if (el.id === "set-effect") save({ effect: btn.dataset.v });
+            if (el.id === "set-badge") save({ tray_badge: btn.dataset.v });
           }),
         ),
       );
@@ -715,6 +948,42 @@ function openSettings() {
       warn.addEventListener("input", () => ($("#warn-v", b).textContent = warn.value + "%"));
       warn.addEventListener("change", () => save({ warn_percent: +warn.value }));
       $("#set-low", b).addEventListener("change", (e) => save({ low_balance: Math.max(0, +e.target.value || 0) }));
+
+      // global shortcut capture: click, press a combination; Backspace/Delete clears, Esc cancels
+      const hk = $("#set-hotkey", b);
+      let capturing = false;
+      const stop = (label) => { capturing = false; hk.classList.remove("on"); hk.textContent = label; };
+      hk.addEventListener("click", () => {
+        capturing = true;
+        hk.classList.add("on");
+        hk.textContent = "Нажмите сочетание…";
+        hk.focus();
+      });
+      hk.addEventListener("blur", () => capturing && stop(S.settings.hotkey || "Не задана"));
+      hk.addEventListener("keydown", (e) => {
+        if (!capturing) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.key === "Escape") return stop(S.settings.hotkey || "Не задана");
+        const combo = e.key === "Backspace" || e.key === "Delete" ? "" : hotkeyFromEvent(e);
+        if (combo === null) return;
+        api.invoke("set_hotkey", { hotkey: combo })
+          .then((v) => { S.settings.hotkey = v; stop(v || "Не задана"); toast(v ? `Горячая клавиша: ${v}` : "Горячая клавиша отключена"); })
+          .catch((err) => { stop(S.settings.hotkey || "Не задана"); toast(err); });
+      });
+
+      renderUpdateRow();
+      $("#set-update-btn", b).addEventListener("click", () => {
+        if (S.update.available) return installUpdate();
+        S.update = { ...S.update, checking: true };
+        renderUpdateRow();
+        api.invoke("check_update").then((u) => {
+          S.update = u;
+          renderUpdateRow();
+          renderUpdateBanner();
+          if (!u.available && !u.error) toast("Установлена последняя версия");
+        });
+      });
       $("#set-folder", b).addEventListener("click", () => api.invoke("open_data_dir").catch(toast));
       $("#set-quit", b).addEventListener("click", () => api.invoke("quit"));
     },

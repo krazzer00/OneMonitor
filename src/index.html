@@ -15,6 +15,7 @@
           <span class="pill" id="overall" data-tauri-drag-region><i class="dot pending"></i><span>Проверка…</span></span>
         </div>
         <button class="icon-btn" id="btn-refresh" title="Обновить сейчас"></button>
+        <button class="icon-btn" id="btn-view" title="Все аккаунты списком"></button>
         <button class="icon-btn" id="btn-pin" title="Закрепить поверх окон"></button>
         <button class="icon-btn" id="btn-settings" title="Настройки"></button>
         <button class="icon-btn close" id="btn-close" title="Свернуть в трей"></button>
@@ -26,9 +27,12 @@
         <button class="icon-btn" id="next" title="Следующий аккаунт"></button>
       </nav>
 
+      <div class="update-banner" id="update-banner" hidden></div>
+
       <main class="viewport" id="viewport">
         <div class="track" id="track"></div>
       </main>
+      <div class="list" id="list"></div>
 
       <footer class="footer">
         <div class="pager" id="pager"></div>

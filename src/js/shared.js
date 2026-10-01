@@ -27,12 +27,6 @@ export const KINDS = {
     auth: "key",
     keyHelp: { text: "Ключ выдаёт @oneprovider_robot", url: "https://t.me/oneprovider_robot" },
   },
-  openrouter: {
-    title: "OpenRouter",
-    desc: "Доступность API и кредиты",
-    auth: "key",
-    keyHelp: { text: "Ключи: openrouter.ai/settings/keys", url: "https://openrouter.ai/settings/keys" },
-  },
   chatgpt: {
     title: "ChatGPT",
     desc: "Лимиты подписки (Codex)",
@@ -53,15 +47,14 @@ export const KINDS = {
     auth: "oauth",
   },
 };
-export const KIND_ORDER = ["oneprovider", "openrouter", "chatgpt", "claude", "antigravity"];
-export const isGateway = (k) => k === "oneprovider" || k === "openrouter";
+export const KIND_ORDER = ["oneprovider", "chatgpt", "claude", "antigravity"];
+export const isGateway = (k) => k === "oneprovider";
 
 const svg = (body, sw = 2) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
 
 export const PROVIDER_ICONS = {
   oneprovider: svg('<path d="M9.5 8.5 13 6v12"/><path d="M9.5 18h7"/>', 2.3),
-  openrouter: svg('<path d="M3 17h4.5l9-10H21"/><path d="M3 7h4.5l2.8 3.2"/><path d="m13.7 13.8 2.8 3.2H21"/><path d="m18.5 4.5 2.5 2.5-2.5 2.5"/><path d="m18.5 14.5 2.5 2.5-2.5 2.5"/>', 2),
   chatgpt: svg('<path d="M12 2.8 20 7.4v9.2l-8 4.6-8-4.6V7.4z"/><path d="M12 7.5v9M8.1 9.75l7.8 4.5M15.9 9.75l-7.8 4.5"/>', 1.9),
   claude: svg('<path d="M12 3.5v17M3.5 12h17M6 6l12 12M18 6 6 18"/>', 2.2),
   antigravity: svg('<path d="M3.5 20C5.5 10.5 8.3 4.5 12 4.5S18.5 10.5 20.5 20"/><path d="M8.5 20c1-3.6 2.1-5.5 3.5-5.5s2.5 1.9 3.5 5.5"/>', 2.1),
@@ -88,6 +81,10 @@ export const ICONS = {
   folder: svg('<path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>', 1.8),
   power: svg('<path d="M12 3v8"/><path d="M6.3 7.2a8 8 0 1 0 11.4 0"/>', 1.9),
   terminal: svg('<path d="m5 8 4 4-4 4"/><path d="M12 17h7"/>', 2),
+  list: svg('<path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/>', 1.9),
+  cards: svg('<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18"/>', 1.8),
+  download: svg('<path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/>', 1.9),
+  bell: svg('<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/>', 1.8),
   login: svg('<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l5-5-5-5"/><path d="M15 12H4"/>', 1.9),
 };
 
@@ -179,9 +176,10 @@ export function tick(root = document) {
 
 /** Applies the glass tint / platform classes. */
 export function applyLook(settings, info) {
-  const fx = info.win11 && ["acrylic", "blur", "mica"].includes(settings.effect);
-  // Without a backdrop effect the desktop would show through sharply: keep it dense.
-  const tint = fx ? settings.tint : Math.max(settings.tint, 0.93);
+  const supported = info.supported_effects || (info.win11 ? ["acrylic", "blur", "mica"] : []);
+  const fx = supported.includes(settings.effect);
+  // Without a backdrop effect the desktop shows through unblurred: keep it denser.
+  const tint = fx ? settings.tint : Math.max(settings.tint, 0.85);
   document.documentElement.style.setProperty("--tint", String(tint));
   document.documentElement.classList.toggle("w11", !!info.win11);
   document.documentElement.classList.toggle("fx", fx);

@@ -2,7 +2,6 @@ pub mod antigravity;
 pub mod chatgpt;
 pub mod claude;
 pub mod oneprovider;
-pub mod openrouter;
 
 use std::time::{Duration, Instant};
 
@@ -63,8 +62,7 @@ pub async fn fetch(http: &Client, acc: Account, settings: &Settings) -> Outcome 
     let before = format!("{:?}{:?}{:?}", acc.secret, acc.meta, acc.email);
     let mut snap = Snapshot::for_account(&acc);
     let result = match acc.kind {
-        Kind::OneProvider => oneprovider::fetch(http, &acc, &mut snap).await,
-        Kind::OpenRouter => openrouter::fetch(http, &acc, &mut snap).await,
+        Kind::OneProvider => oneprovider::fetch(http, &mut acc, &mut snap).await,
         Kind::ChatGpt => chatgpt::fetch(http, &mut acc, &mut snap).await,
         Kind::Claude => claude::fetch(http, &mut acc, &mut snap).await,
         Kind::Antigravity => antigravity::fetch(http, &mut acc, &mut snap).await,
@@ -73,6 +71,7 @@ pub async fn fetch(http: &Client, acc: Account, settings: &Settings) -> Outcome 
         snap.error = Some(e);
     }
     snap.updated_at = now();
+    add_pace(&mut snap.limits);
     snap.plan = snap.plan.take().or_else(|| acc.meta_str("plan"));
     snap.email = acc.email.clone();
     evaluate(&mut snap, settings);
@@ -142,4 +141,64 @@ pub fn pretty_plan(raw: &str) -> String {
         }
     }
     out
+}
+
+/// Projects when each windowed limit runs out at the average pace of the
+/// current window (used so far / time elapsed since the window started).
+pub fn add_pace(limits: &mut [crate::model::Limit]) {
+    let t = now();
+    for l in limits.iter_mut() {
+        let (Some(window), Some(reset)) = (l.window_secs, l.resets_at) else { continue };
+        let left = reset - t;
+        let elapsed = window - left;
+        // too early in the window for a meaningful pace
+        if left <= 0 || elapsed < (window / 20).max(600) || l.used_percent >= 100.0 {
+            continue;
+        }
+        if l.used_percent <= 0.0 {
+            l.pace_ok = true;
+            continue;
+        }
+        let per_sec = l.used_percent / elapsed as f64;
+        let eta = ((100.0 - l.used_percent) / per_sec) as i64;
+        if eta < left {
+            l.eta_secs = Some(eta);
+        } else {
+            l.pace_ok = true;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Limit;
+
+    fn limit(used: f64, window: i64, left: i64) -> Limit {
+        Limit {
+            used_percent: used,
+            window_secs: Some(window),
+            resets_at: Some(now() + left),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn pace_projection() {
+        // 5h window, 2.5h elapsed, 80% used -> 100% in ~37.5 min, before the reset
+        let mut l = [limit(80.0, 18000, 9000)];
+        add_pace(&mut l);
+        let eta = l[0].eta_secs.expect("runs out before reset");
+        assert!((2200..=2300).contains(&eta), "{eta}");
+
+        // 20% used halfway through -> lasts until the reset
+        let mut l = [limit(20.0, 18000, 9000)];
+        add_pace(&mut l);
+        assert!(l[0].eta_secs.is_none() && l[0].pace_ok);
+
+        // first minutes of a window are too noisy to project
+        let mut l = [limit(10.0, 18000, 17900)];
+        add_pace(&mut l);
+        assert!(l[0].eta_secs.is_none() && !l[0].pace_ok);
+    }
 }

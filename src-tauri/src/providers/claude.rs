@@ -344,6 +344,7 @@ pub(crate) fn parse_usage(v: &Value, snap: &mut Snapshot) {
                     _ => None,
                 },
                 detail: None,
+                ..Default::default()
             },
         ));
     }

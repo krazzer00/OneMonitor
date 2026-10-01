@@ -37,13 +37,14 @@ function row(s) {
   } else if (isGateway(s.kind)) {
     const svc = s.service;
     if (s.balance) {
-      value = money(s.balance.amount);
-      vcls = s.balance.amount < (settings.low_balance ?? 1) ? "warn" : "ok";
+      value = (s.balance.stale ? "≈ " : "") + money(s.balance.amount);
+      vcls = s.balance.stale || s.balance.amount < (settings.low_balance ?? 1) ? "warn" : "ok";
     } else if (svc) {
       value = svc.up ? "Доступен" : "Недоступен";
     }
     if (svc && !svc.up) vcls = "error";
     sub = svc ? `<span>${svc.up ? "API" : "API недоступен"}${svc.latency_ms != null ? " · " + svc.latency_ms + " ms" : ""}</span>` : "";
+    if (s.spend && svc && svc.up) sub = `<span>сегодня ${esc(money(s.spend.today))} · ${svc.latency_ms ?? "—"} ms</span>`;
   } else {
     const top = bindingLimit(s.limits);
     if (top) {

@@ -292,6 +292,7 @@ fn window_limit(key: &str, prefix: &str, w: &Value) -> Option<Limit> {
         resets_at,
         window_secs: window,
         detail: None,
+        ..Default::default()
     })
 }
 
