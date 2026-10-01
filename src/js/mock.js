@@ -19,6 +19,13 @@ let settings = {
   low_balance: 1,
   warn_percent: 85,
   active_tab: null,
+  notify: true,
+  notify_balance: true,
+  notify_limits: true,
+  notify_service: true,
+  tray_badge: "balance",
+  hotkey: "Ctrl+Alt+O",
+  auto_update: true,
 };
 
 let snapshots = [
@@ -49,7 +56,7 @@ let snapshots = [
     id: "a2", kind: "chatgpt", label: "work@example.com", email: "work@example.com", source: "oauth", state: "ok",
     error: null, warning: null, updated_at: now() - 14, plan: "Plus", balance: null, service: null,
     limits: [
-      { key: "codex.primary", name: "5-часовой лимит", used_percent: 37, resets_at: now() + 2 * 3600 + 14 * 60, window_secs: 18000, detail: null },
+      { key: "codex.primary", name: "5-часовой лимит", used_percent: 37, resets_at: now() + 2 * 3600 + 14 * 60, window_secs: 18000, detail: null, pace_ok: true },
       { key: "codex.secondary", name: "Недельный лимит", used_percent: 58, resets_at: now() + 3 * 86400 + 5 * 3600, window_secs: 604800, detail: null },
     ],
     notes: [], history: [], link: "https://chatgpt.com/codex/settings/usage",
@@ -58,7 +65,7 @@ let snapshots = [
     id: "a3", kind: "claude", label: "me@example.com", email: "me@example.com", source: "cli", state: "warn",
     error: null, warning: null, updated_at: now() - 14, plan: "Max 5x", balance: null, service: null,
     limits: [
-      { key: "five_hour", name: "5-часовое окно", used_percent: 88, resets_at: now() + 47 * 60, window_secs: 18000, detail: null },
+      { key: "five_hour", name: "5-часовое окно", used_percent: 88, resets_at: now() + 47 * 60, window_secs: 18000, detail: null, eta_secs: 25 * 60 },
       { key: "seven_day", name: "Неделя · все модели", used_percent: 41, resets_at: now() + 4 * 86400, window_secs: 604800, detail: null },
       { key: "seven_day_opus", name: "Неделя · Opus", used_percent: 12, resets_at: now() + 4 * 86400, window_secs: 604800, detail: null },
     ],
@@ -73,14 +80,6 @@ let snapshots = [
       { key: "Gemini Flash", name: "Gemini Flash", used_percent: 64, resets_at: now() + 1 * 3600, detail: "Gemini 3 Flash" },
     ],
     notes: [], history: [], link: "https://antigravity.google/",
-  },
-  {
-    id: "a5", kind: "openrouter", label: "OpenRouter ···9f2c", email: null, source: "apikey", state: "error",
-    error: null, warning: null, updated_at: now() - 14, plan: null,
-    balance: { amount: 3.12, currency: "USD", total: 20, used: 16.88 },
-    service: { up: false, latency_ms: null, code: 503, message: "Сбой API (HTTP 503)", components: [] },
-    limits: [], notes: [{ label: "Расход сегодня", value: "$0.42" }, { label: "Расход за месяц", value: "$9.10" }],
-    history: history(240, 40, [30, 38, 39]), link: "https://openrouter.ai/settings/credits",
   },
 ];
 
@@ -97,8 +96,12 @@ export const mockApi = {
       case "get_state":
         return {
           snapshots, settings,
-          info: { version: "0.1.0", data_dir: "C:\\Tools\\OneMonitor\\data", win11: true, effect_active: true, autostart: true },
+          info: {
+            version: "0.2.0", data_dir: "C:\\Tools\\OneMonitor\\data", win11: true, effect_active: true,
+            supported_effects: ["blur", "acrylic", "mica"], autostart: true, dev_build: false,
+          },
           refreshing: false, pinned: false,
+          update: { available: { version: "0.2.1", url: "https://github.com/krazzer00/OneMonitor/releases" }, checking: false, installing: false, error: null, checked_at: now() - 600 },
         };
       case "refresh_now":
         emit("refreshing", true);
@@ -125,6 +128,15 @@ export const mockApi = {
         throw "Демо-режим: вход недоступен";
       case "set_autostart":
         return args.enabled;
+      case "set_hotkey":
+        settings = { ...settings, hotkey: args.hotkey };
+        return args.hotkey;
+      case "check_update":
+        await new Promise((r) => setTimeout(r, 700));
+        return { available: null, checking: false, installing: false, error: null, checked_at: now() };
+      case "install_update":
+        await new Promise((r) => setTimeout(r, 1500));
+        throw "Демо-режим: обновление недоступно";
       default:
         return null;
     }

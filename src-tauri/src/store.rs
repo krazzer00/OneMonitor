@@ -83,13 +83,22 @@ struct AccountsFile {
     accounts: Vec<StoredAccount>,
 }
 
+/// Same file, read leniently: entries of unknown (e.g. removed) providers are
+/// skipped instead of failing the whole file.
+#[derive(Deserialize, Default)]
+struct RawAccountsFile {
+    #[serde(default)]
+    accounts: Vec<Value>,
+}
+
 pub fn load_accounts(dir: &Path) -> Vec<Account> {
     let Ok(bytes) = fs::read(dir.join("accounts.json")) else {
         return vec![];
     };
-    let file: AccountsFile = serde_json::from_slice(&bytes).unwrap_or_default();
+    let file: RawAccountsFile = serde_json::from_slice(&bytes).unwrap_or_default();
     file.accounts
         .into_iter()
+        .filter_map(|v| serde_json::from_value::<StoredAccount>(v).ok())
         .map(|a| Account {
             secret: decode_secret(&a.secret).unwrap_or_default(),
             id: a.id,
@@ -227,5 +236,28 @@ mod dpapi {
             }
             Ok(take(out))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unknown_providers_are_skipped_not_fatal() {
+        let dir = std::env::temp_dir().join(format!("onemonitor-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("accounts.json"),
+            r#"{"version":1,"accounts":[
+                {"id":"a","kind":"openrouter","label":"gone","secret":""},
+                {"id":"b","kind":"oneprovider","label":"kept","secret":""}
+            ]}"#,
+        )
+        .unwrap();
+        let accounts = load_accounts(&dir);
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].label, "kept");
+        let _ = fs::remove_dir_all(&dir);
     }
 }
