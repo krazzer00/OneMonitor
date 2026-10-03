@@ -378,7 +378,8 @@ function gatewayHtml(s) {
     h += `<div class="card"><h4>Доступность API <em class="num">${svc.latency_ms != null ? svc.latency_ms + " ms" : ""}</em></h4>
       <div class="svc"><i class="dot ${st}"></i><span class="m" title="${esc(svc.message)}">${esc(svc.message)}</span></div>
       ${sparkline(s.history || [])}
-      ${componentsHtml(svc.components || [])}</div>`;
+      ${componentsHtml(svc.components || [])}
+      ${modelsNote(svc)}</div>`;
   }
   return h;
 }
@@ -443,6 +444,16 @@ function sparkline(hist) {
   return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
     <defs><linearGradient id="sparkfill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9db8ff" stop-opacity=".28"/><stop offset="1" stop-color="#9db8ff" stop-opacity="0"/></linearGradient></defs>
     <path class="area" d="${area}"/><path class="line" d="${line}"/>${fails}</svg>`;
+}
+
+/** Explains why there is no per-model block (the provider publishes nothing). */
+function modelsNote(svc) {
+  if ((svc.components || []).length) return "";
+  const text = {
+    empty: "OneProvider сейчас не публикует данные по моделям — состояние отдельных моделей неизвестно",
+    unavailable: "Статус моделей OneProvider недоступен — состояние отдельных моделей неизвестно",
+  }[svc.models_status];
+  return text ? `<div class="models-note">${ICONS.info}<span>${esc(text)}</span></div>` : "";
 }
 
 function componentsHtml(list) {
