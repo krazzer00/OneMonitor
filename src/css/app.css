@@ -691,3 +691,6 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16p
 
 /* status pill in the title bar: just the dot (text is in the tooltip) */
 .titlebar .pill { width: 22px; padding: 0; justify-content: center; flex: none; }
+
+.models-note { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; color: var(--text-3); font-size: 11.5px; line-height: 1.4; }
+.models-note svg { width: 13px; height: 13px; flex: none; margin-top: 1px; }

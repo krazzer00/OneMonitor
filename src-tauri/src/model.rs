@@ -186,6 +186,9 @@ pub struct Service {
     pub components: Vec<Component>,
     /// Families with current problems, e.g. ["DeepSeek: сбой", "GLM: перебои"].
     pub issues: Vec<String>,
+    /// Per-model data from the provider: "" (not applicable), "ok", "empty"
+    /// (the provider publishes no families right now) or "unavailable".
+    pub models_status: String,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]

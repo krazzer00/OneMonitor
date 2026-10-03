@@ -79,11 +79,14 @@ pub async fn fetch(http: &Client, acc: &mut Account, snap: &mut Snapshot) -> Res
     snap.spend = usage.as_ref().map(parse_usage);
 
     let mut service = service_from_probe(&probe, key.is_some());
-    if let Ok(resp) = &families {
-        if let Ok(v) = resp.json() {
+    service.models_status = match families.as_ref().map(|r| r.json()) {
+        Ok(Ok(v)) => {
             service.components = parse_families(&v, crate::util::now());
+            if service.components.is_empty() { "empty" } else { "ok" }
         }
+        _ => "unavailable",
     }
+    .to_owned();
     apply_family_issues(&mut service);
     if !service.issues.is_empty() {
         snap.warning = Some(format!("Перебои у моделей: {}", service.issues.join(", ")));
@@ -288,6 +291,7 @@ fn service_from_probe(probe: &Res<Resp>, has_key: bool) -> Service {
                 message,
                 components: vec![],
                 issues: vec![],
+                models_status: String::new(),
             }
         }
         Err(e) => Service {
@@ -297,6 +301,7 @@ fn service_from_probe(probe: &Res<Resp>, has_key: bool) -> Service {
             message: e.clone(),
             components: vec![],
             issues: vec![],
+            models_status: String::new(),
         },
     }
 }
@@ -585,6 +590,13 @@ mod tests {
         apply_family_issues(&mut svc);
         assert_eq!(svc.issues, ["deepseek: сбой", "glm: перебои"]);
         assert_eq!(svc.message, "API работает · перебои: deepseek, glm");
+    }
+
+    #[test]
+    fn empty_family_list_has_no_components() {
+        // what the endpoint returns while the provider's observations are off
+        let v = json!({"families": [], "generated_at": "2026-10-03T01:39:55Z", "schema_version": 1});
+        assert!(parse_families(&v, 1_800_000_000).is_empty());
     }
 
     #[test]
