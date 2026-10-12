@@ -3,6 +3,8 @@ pub mod chatgpt;
 pub mod claude;
 pub mod nanogpt;
 pub mod oneprovider;
+pub mod opencode;
+pub mod unjailed;
 
 use std::time::{Duration, Instant};
 
@@ -68,6 +70,8 @@ pub async fn fetch(http: &Client, acc: Account, settings: &Settings) -> Outcome 
         Kind::Claude => claude::fetch(http, &mut acc, &mut snap).await,
         Kind::Antigravity => antigravity::fetch(http, &mut acc, &mut snap).await,
         Kind::NanoGpt => nanogpt::fetch(http, &mut acc, &mut snap).await,
+        Kind::Unjailed => unjailed::fetch(http, &mut acc, &mut snap).await,
+        Kind::OpenCode => opencode::fetch(http, &mut acc, &mut snap).await,
     };
     if let Err(e) = result {
         snap.error = Some(e);

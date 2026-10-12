@@ -143,9 +143,17 @@ async fn refresh_all(app: &AppHandle) {
                 }
             }
             if let Some(updated) = o.account {
-                // keep user edits (label) made while the request was in flight
+                // keep user edits (label) and website sign-ins/outs made while
+                // the request was in flight; providers never change those
+                let cookie = current.secret.cookie.take();
+                let site_user = current.meta.remove("site_user");
                 current.secret = updated.secret;
+                current.secret.cookie = cookie;
                 current.meta = updated.meta;
+                match site_user {
+                    Some(u) => current.meta.insert("site_user".into(), u),
+                    None => current.meta.remove("site_user"),
+                };
                 current.email = updated.email;
                 changed = true;
             }
@@ -221,6 +229,13 @@ fn tooltip(snaps: &[Snapshot]) -> String {
         let kind = s.kind.map(|k| k.title()).unwrap_or("");
         let value = if let Some(e) = &s.error {
             format!("ошибка: {}", e.chars().take(30).collect::<String>())
+        } else if let Some(f) = &s.free {
+            if f.models.iter().any(|m| m.limited) {
+                "бесплатный лимит исчерпан".into()
+            } else {
+                let n: u64 = f.models.iter().map(|m| m.requests_5h).sum();
+                format!("{n} запр. за 5 ч")
+            }
         } else if let Some(b) = &s.balance {
             util::fmt_usd(b.amount)
         } else if let Some(l) = s
@@ -578,6 +593,7 @@ fn add_key_account(app: AppHandle, kind: Kind, key: String, label: Option<String
         secret: model::Secret {
             api_key: Some(key).filter(|k| !k.is_empty()),
             tokens: None,
+            cookie: None,
         },
     };
     // API-key accounts are never merged: two keys = two tabs.
@@ -635,6 +651,120 @@ async fn import_cli(app: AppHandle, kind: Kind) -> Res<String> {
         _ => return Err("Импорт доступен только для Codex CLI и Claude Code".into()),
     };
     insert_account(&app, acc)
+}
+
+/// Accounts read from local files (OpenCode history): one per kind.
+#[tauri::command]
+fn add_local_account(app: AppHandle, kind: Kind) -> Res<String> {
+    if kind != Kind::OpenCode {
+        return Err("Этот сервис подключается иначе".into());
+    }
+    insert_account(
+        &app,
+        Account {
+            id: uuid::Uuid::new_v4().to_string(),
+            kind,
+            label: kind.title().into(),
+            email: None,
+            source: Source::Cli,
+            meta: Default::default(),
+            created_at: now(),
+            secret: Default::default(),
+        },
+    )
+}
+
+const SITE_LOGIN_LABEL: &str = "site-login";
+
+/// Signs in on a website whose account data has no API (Unjailed AI: wallet
+/// and plan). The user logs in (with the captcha) in a private browser window;
+/// once the site accepts the session its cookies are stored, encrypted, with
+/// the account and the window closes.
+#[tauri::command]
+async fn site_login(app: AppHandle, id: String) -> Res<()> {
+    use providers::unjailed;
+    let kind = state(&app)
+        .accounts
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|a| a.id == id)
+        .map(|a| a.kind)
+        .ok_or("Аккаунт не найден")?;
+    if kind != Kind::Unjailed {
+        return Err("Вход на сайт нужен только для Unjailed AI".into());
+    }
+    if let Some(w) = app.get_webview_window(SITE_LOGIN_LABEL) {
+        let _ = w.close();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    let url: url::Url = unjailed::LOGIN_URL.parse().map_err(|e| format!("{e}"))?;
+    let site: url::Url = unjailed::SITE.parse().map_err(|e| format!("{e}"))?;
+    let win = tauri::WebviewWindowBuilder::new(&app, SITE_LOGIN_LABEL, tauri::WebviewUrl::External(url))
+        .title("Вход в Unjailed AI — OneMonitor")
+        .inner_size(460.0, 720.0)
+        .center()
+        .incognito(true)
+        .build()
+        .map_err(|e| format!("Не удалось открыть окно входа: {e}"))?;
+
+    let http = state(&app).http.clone();
+    let started = Instant::now();
+    let mut last_header = String::new();
+    loop {
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        if app.get_webview_window(SITE_LOGIN_LABEL).is_none() {
+            return Err("Окно входа закрыто".into());
+        }
+        if started.elapsed() > Duration::from_secs(15 * 60) {
+            let _ = win.close();
+            return Err("Время на вход истекло".into());
+        }
+        // (reading cookies must not happen on the main thread on Windows)
+        let Ok(cookies) = win.cookies_for_url(site.clone()) else { continue };
+        let header = cookies
+            .iter()
+            .map(|c| format!("{}={}", c.name(), c.value()))
+            .collect::<Vec<_>>()
+            .join("; ");
+        if header.is_empty() || header == last_header {
+            continue;
+        }
+        last_header = header.clone();
+        let Ok(resp) = providers::send(http.get(unjailed::ME_URL).header("Cookie", &header)).await else {
+            continue;
+        };
+        let user = resp.json().ok().and_then(|v| v.get("user").cloned()).filter(|u| u.is_object());
+        let Some(user) = user else { continue };
+        {
+            let st = state(&app);
+            let mut accounts = st.accounts.lock().unwrap();
+            if let Some(a) = accounts.iter_mut().find(|a| a.id == id) {
+                a.secret.cookie = Some(header);
+                if let Some(name) = user.get("username").and_then(|v| v.as_str()) {
+                    a.set_meta("site_user", name);
+                }
+            }
+        }
+        state(&app).save_accounts()?;
+        let _ = win.close();
+        show_main(&app, None);
+        state(&app).wake.notify_one();
+        return Ok(());
+    }
+}
+
+/// Forgets the website session of an account.
+#[tauri::command]
+fn site_logout(app: AppHandle, id: String) -> Res<()> {
+    let st = state(&app);
+    if let Some(a) = st.accounts.lock().unwrap().iter_mut().find(|a| a.id == id) {
+        a.secret.cookie = None;
+        a.meta.remove("site_user");
+    }
+    st.save_accounts()?;
+    st.wake.notify_one();
+    Ok(())
 }
 
 #[tauri::command]
@@ -1002,6 +1132,9 @@ pub fn run() {
             get_state,
             refresh_now,
             add_key_account,
+            add_local_account,
+            site_login,
+            site_logout,
             login,
             cancel_login,
             import_cli,

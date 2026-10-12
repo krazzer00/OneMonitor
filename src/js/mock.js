@@ -82,6 +82,59 @@ let snapshots = [
     history: history(240, 40), link: "https://status.nano-gpt.com",
   },
   {
+    id: "a6", kind: "unjailed", label: "Unjailed AI", email: null, source: "apikey", state: "warn",
+    error: null, warning: "Перебои у моделей: kimi-k3: перебои", updated_at: now() - 14, plan: "Pro", session: "ok",
+    balance: { amount: 21.37, currency: "USD", total: null, used: null, expires_at: null, active: null },
+    limits: [],
+    spend: {
+      currency: "USD", today: 0.41, today_requests: 37, week: 4.9, month: 17.2, forecast_days: 30,
+      daily: [1.1, 0.4, 0.9, 0.2, 0, 1.4, 0.8, 0.6, 0.3, 0.7, 1.2, 0.5, 0.8, 0.41].map((cost, i) => ({
+        date: new Date(Date.now() - (13 - i) * 86400000).toISOString().slice(0, 10), cost, requests: Math.round(cost * 60) + 4,
+      })),
+      top_models: [],
+    },
+    service: {
+      up: true, latency_ms: 214, code: 200, message: "API работает · перебои: kimi-k3", issues: ["kimi-k3: перебои"], models_status: "ok",
+      components: [
+        { name: "glm-5.3", uptime: 100, state: "ok", granularity: "now", latency_s: 3.0, recent: [] },
+        { name: "glm-5.3-uncensored", uptime: 100, state: "ok", granularity: "now", latency_s: 4.7, recent: [] },
+        { name: "glm-5.3-flash", uptime: 100, state: "ok", granularity: "now", latency_s: 6.4, recent: [] },
+        { name: "glm-5.3-flash-uncensored", uptime: 100, state: "ok", granularity: "now", latency_s: 8.1, recent: [] },
+        { name: "glm-5.3-abliterated", uptime: 100, state: "ok", granularity: "now", latency_s: 9.8, recent: [] },
+        { name: "glm-5.2", uptime: 100, state: "ok", granularity: "now", latency_s: 11.5, recent: [] },
+        { name: "deepseek-v4.1-flash", uptime: 100, state: "ok", granularity: "now", latency_s: 13.2, recent: [] },
+        { name: "deepseek-v4-pro-0813", uptime: 100, state: "ok", granularity: "now", latency_s: 14.9, recent: [] },
+        { name: "kimi-k3", uptime: 91.5, state: "degraded", granularity: "now", latency_s: 16.6, recent: [] },
+        { name: "gpt-6-astra", uptime: 100, state: "ok", granularity: "now", latency_s: 18.3, recent: [] },
+        { name: "claude-fable-5", uptime: 100, state: "ok", granularity: "now", latency_s: 20.0, recent: [] },
+        { name: "claude-opus-5-5", uptime: 100, state: "ok", granularity: "now", latency_s: 21.7, recent: [] },
+        { name: "claude-sonnet-5-5", uptime: 100, state: "ok", granularity: "now", latency_s: 3.4, recent: [] },
+        { name: "claude-haiku-5-5", uptime: 100, state: "ok", granularity: "now", latency_s: 5.1, recent: [] },
+        { name: "quark-4.7", uptime: 100, state: "ok", granularity: "now", latency_s: 6.8, recent: [] }
+      ],
+    },
+    notes: [{ label: "Аккаунт", value: "u3f9a1c22b7e0" }, { label: "Тариф продлится", value: "01.11 03:00" }, { label: "Лимит запросов", value: "60 в минуту" }],
+    history: history(210, 40), link: "https://unjailedai.com/status",
+  },
+  {
+    id: "a7", kind: "opencode", label: "OpenCode", email: null, source: "cli", state: "warn",
+    error: null, warning: "Исчерпан бесплатный лимит big-pickle, сброс 12.10 18:40", updated_at: now() - 14, plan: null,
+    balance: null, limits: [], notes: [],
+    free: {
+      sources: ["C:\\Users\\me\\.local\\share\\opencode\\opencode.db"],
+      models: [
+        { id: "big-pickle", available: true, requests_5h: 64, requests_24h: 131, requests_7d: 402, last_used_at: now() - 900, limit_at: now() - 900, limited: true, limited_until: now() + 2 * 3600 + 600, limit_after_5h: 64 },
+        { id: "space-bunny-free", available: true, requests_5h: 12, requests_24h: 40, requests_7d: 96, last_used_at: now() - 3000, limit_at: null, limited: false, limited_until: null, limit_after_5h: null },
+        { id: "mimo-v2.6-flash-free", available: true, requests_5h: 0, requests_24h: 3, requests_7d: 18, last_used_at: now() - 20 * 3600, limit_at: now() - 3 * 86400, limited: false, limited_until: null, limit_after_5h: 210 },
+        { id: "step-5-preview-free", available: true, requests_5h: 0, requests_24h: 0, requests_7d: 0, last_used_at: null, limit_at: null, limited: false },
+        { id: "longcat-2.5-preview-free", available: true, requests_5h: 0, requests_24h: 0, requests_7d: 0, last_used_at: null, limit_at: null, limited: false },
+        { id: "jev-1.13-free", available: true, requests_5h: 0, requests_24h: 0, requests_7d: 0, last_used_at: null, limit_at: null, limited: false },
+      ],
+    },
+    service: { up: true, latency_ms: 241, code: 200, message: "Zen работает · бесплатных моделей: 10", issues: [], models_status: "", components: [] },
+    history: history(240, 40), link: "https://opencode.ai/zen",
+  },
+  {
     id: "a2", kind: "chatgpt", label: "work@example.com", email: "work@example.com", source: "oauth", state: "ok",
     error: null, warning: null, updated_at: now() - 14, plan: "Plus", balance: null, service: null,
     limits: [
@@ -155,6 +208,13 @@ export const mockApi = {
       case "login":
         await new Promise((r) => setTimeout(r, 2500));
         throw "Демо-режим: вход недоступен";
+      case "add_local_account":
+        return "a7";
+      case "site_login":
+        await new Promise((r) => setTimeout(r, 1500));
+        throw "Демо-режим: вход недоступен";
+      case "site_logout":
+        return;
       case "set_autostart":
         return args.enabled;
       case "set_hotkey":

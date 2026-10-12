@@ -9,6 +9,8 @@ pub enum Kind {
     Claude,
     Antigravity,
     NanoGpt,
+    Unjailed,
+    OpenCode,
 }
 
 impl Kind {
@@ -19,11 +21,13 @@ impl Kind {
             Kind::Claude => "Claude",
             Kind::Antigravity => "Antigravity",
             Kind::NanoGpt => "NanoGPT",
+            Kind::Unjailed => "Unjailed AI",
+            Kind::OpenCode => "OpenCode",
         }
     }
 
     pub fn is_gateway(self) -> bool {
-        matches!(self, Kind::OneProvider | Kind::NanoGpt)
+        matches!(self, Kind::OneProvider | Kind::NanoGpt | Kind::Unjailed)
     }
 }
 
@@ -64,6 +68,9 @@ pub struct Secret {
     pub api_key: Option<String>,
     #[serde(default)]
     pub tokens: Option<Tokens>,
+    /// Website session cookies (sites whose account data has no API).
+    #[serde(default)]
+    pub cookie: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -177,9 +184,11 @@ pub struct Component {
     pub state: String,
     /// Outcome of each recent probe interval (or day), oldest first: true = ok.
     pub recent: Vec<bool>,
-    /// Where the data comes from: "probes" (recent probes) or "days" (daily
-    /// history of a status page). Empty = probes.
+    /// Where the data comes from: "probes" (recent probes), "days" (daily
+    /// history of a status page) or "now" (current state only). Empty = probes.
     pub granularity: String,
+    /// Average response time reported by the provider, seconds.
+    pub latency_s: Option<f64>,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -262,6 +271,33 @@ pub struct Probe {
     pub ok: bool,
 }
 
+/// Usage of one free OpenCode Zen model, read from the local OpenCode history.
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct FreeModel {
+    pub id: String,
+    /// Listed by Zen right now.
+    pub available: bool,
+    pub requests_5h: u64,
+    pub requests_24h: u64,
+    pub requests_7d: u64,
+    pub last_used_at: Option<i64>,
+    /// Latest "free limit reached" answer.
+    pub limit_at: Option<i64>,
+    /// The latest answer was the limit error (no successful one after it).
+    pub limited: bool,
+    /// When the provider said the limit resets (Retry-After).
+    pub limited_until: Option<i64>,
+    /// Successful requests in the 5 hours before the latest limit error.
+    pub limit_after_5h: Option<u64>,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct FreeUsage {
+    /// OpenCode database files that were read.
+    pub sources: Vec<String>,
+    pub models: Vec<FreeModel>,
+}
+
 /// Everything the UI needs to render one account tab.
 #[derive(Serialize, Clone, Debug, Default)]
 pub struct Snapshot {
@@ -284,6 +320,9 @@ pub struct Snapshot {
     pub notes: Vec<Note>,
     pub history: Vec<Probe>,
     pub link: Option<String>,
+    /// Website session for account data: "" (not used), "none", "ok", "expired".
+    pub session: String,
+    pub free: Option<FreeUsage>,
 }
 
 impl Snapshot {

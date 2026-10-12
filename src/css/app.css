@@ -228,6 +228,8 @@ svg { display: block; }
 }
 .pi.oneprovider { --pc: #8b5cf6; }
 .pi.nanogpt { --pc: #db2777; }
+.pi.unjailed { --pc: #b45309; }
+.pi.opencode { --pc: #52525b; }
 .pi.chatgpt { --pc: #10a37f; }
 .pi.claude { --pc: #d97757; }
 .pi.antigravity { --pc: #3b82f6; }
@@ -384,6 +386,28 @@ svg { display: block; }
 .comp .series i { flex: 1; border-radius: 2px; background: var(--ok); opacity: 0.7; }
 .comp .series i.w { background: var(--warn); }
 .comp .series i.e { background: var(--err); }
+.comp-more { margin-top: 6px; }
+.comp-more summary { cursor: pointer; font-size: 11.5px; color: var(--text-3); list-style: none; padding: 4px 0; user-select: none; }
+.comp-more summary::-webkit-details-marker { display: none; }
+.comp-more summary::before { content: "▸"; display: inline-block; width: 12px; transition: transform 0.2s; }
+.comp-more[open] summary::before { transform: rotate(90deg); }
+.comp-more summary:hover { color: var(--text); }
+
+/* OpenCode free models */
+.fm { padding: 8px 0; border-top: 1px solid var(--stroke); }
+.fm:first-of-type { border-top: 0; }
+.fm .top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.fm .n { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fm .n .dot { width: 6px; height: 6px; box-shadow: none; flex: none; }
+.fm .st { font-style: normal; font-size: 11px; color: var(--text-3); white-space: nowrap; }
+.fm .st.error { color: var(--err); }
+.fm .st b { font-weight: 600; }
+.fm .r { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 4px; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.fm .r b { color: var(--text); font-weight: 600; }
+.fm .d { margin-top: 3px; font-size: 11px; color: var(--text-3); }
+.fm.lim .d { color: var(--warn); }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip { font: 500 11px var(--mono); padding: 3px 7px; border-radius: 6px; background: var(--glass-hi); color: var(--text-2); }
 
 /* limits */
 .limit + .limit { margin-top: 13px; }

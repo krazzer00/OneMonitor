@@ -120,6 +120,30 @@ pub fn diff(
         }
     }
 
+    // --- OpenCode free models: limit reached / lifted
+    if settings.notify_limits {
+        let first_check = old.map_or(true, |o| o.updated_at == 0);
+        for m in new.free.iter().flat_map(|f| f.models.iter()) {
+            let key = format!("free:{}:{}", new.id, m.id);
+            if m.limited {
+                if fired.insert(key) && !first_check {
+                    out.push(Toast {
+                        title: format!("{name}: исчерпан бесплатный лимит {}", m.id),
+                        body: match m.limited_until {
+                            Some(t) => format!("Сброс {}", crate::util::fmt_local(t)),
+                            None => "OpenCode получил отказ по бесплатному лимиту".into(),
+                        },
+                    });
+                }
+            } else if fired.remove(&key) && !first_check {
+                out.push(Toast {
+                    title: format!("{name}: {} снова доступна", m.id),
+                    body: "Бесплатный лимит сброшен".into(),
+                });
+            }
+        }
+    }
+
     // --- availability and errors (only transitions, never on the first check)
     if settings.notify_service {
         if let Some(old) = old.filter(|o| o.updated_at > 0) {
@@ -156,6 +180,33 @@ pub fn diff(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn free_limit_reached_and_lifted() {
+        use crate::model::{FreeModel, FreeUsage};
+        let s = Settings::default();
+        let mut fired = HashSet::new();
+        let snap = |limited: bool| Snapshot {
+            id: "oc".into(),
+            kind: Some(Kind::OpenCode),
+            label: "OpenCode".into(),
+            updated_at: 1,
+            free: Some(FreeUsage {
+                sources: vec![],
+                models: vec![FreeModel { id: "big-pickle".into(), limited, ..Default::default() }],
+            }),
+            ..Default::default()
+        };
+        let ok = snap(false);
+        assert!(diff(None, &ok, &s, &mut fired).is_empty());
+        let lim = snap(true);
+        let t = diff(Some(&ok), &lim, &s, &mut fired);
+        assert_eq!(t.len(), 1);
+        assert!(t[0].title.contains("исчерпан бесплатный лимит big-pickle"));
+        assert!(diff(Some(&lim), &lim, &s, &mut fired).is_empty(), "once per crossing");
+        let t = diff(Some(&lim), &ok, &s, &mut fired);
+        assert!(t[0].title.contains("снова доступна"));
+    }
     use crate::model::{Balance, Kind, Limit, Service};
 
     fn snap() -> Snapshot {

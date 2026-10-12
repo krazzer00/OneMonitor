@@ -1,5 +1,5 @@
 import {
-  api, esc, KINDS, KIND_ORDER, isGateway, pi, ICONS, LOGO, money, clock, dateShort, level,
+  api, esc, KINDS, KIND_ORDER, isGateway, freeSummary, pi, ICONS, LOGO, money, clock, dateShort, level,
   bindingLimit, STATE_TEXT, overall, tick, applyLook, animateIn, until,
 } from "./shared.js";
 
@@ -16,6 +16,7 @@ const S = {
   loginKind: null,
   update: {},
   compact: false,
+  moreOpen: new Set(),
 };
 
 const store = {
@@ -117,6 +118,9 @@ function listRowHtml(s) {
     value = "Ошибка"; cls = "error"; sub = s.error;
   } else if (!s.updated_at) {
     sub = "проверка";
+  } else if (s.kind === "opencode") {
+    const f = freeSummary(s);
+    value = f.value; cls = f.cls; sub = f.sub;
   } else if (isGateway(s.kind) && !(s.limits || []).length) {
     const svc = s.service;
     if (s.balance) {
@@ -143,7 +147,7 @@ function listRowHtml(s) {
   const who = s.email && s.email !== s.label
     ? s.email
     : s.label === k.title || s.label.startsWith(k.title + " ")
-      ? (isGateway(s.kind) ? s.plan || "Шлюз" : s.plan || k.title)
+      ? (s.kind === "opencode" ? "бесплатные модели" : isGateway(s.kind) ? s.plan || "Шлюз" : s.plan || k.title)
       : [k.title, s.plan].filter(Boolean).join(" · ");
   return `<button class="lrow" data-id="${esc(s.id)}">${pi(s.kind)}
     <span class="who"><span class="l">${esc(s.label)}</span><span class="s">${esc(who)}</span></span>
@@ -316,9 +320,9 @@ function accountHtml(s) {
   const subParts = [];
   if (s.email && s.email !== s.label) subParts.push(s.email);
   else if (s.label === k.title || s.label.startsWith(k.title + " ")) {
-    subParts.push(isGateway(s.kind) ? (s.notes || []).some((n) => n.label === "Режим" && n.value.startsWith("только статус")) ? "Только статус" : "API-ключ" : k.title);
+    subParts.push(s.kind === "opencode" ? "бесплатные модели · локальная история" : isGateway(s.kind) ? (s.notes || []).some((n) => n.label === "Режим" && n.value.startsWith("только статус")) ? "Только статус" : "API-ключ" : k.title);
   } else subParts.push(k.title);
-  if (s.source === "cli") subParts.push(s.kind === "chatgpt" ? "Codex CLI" : "Claude Code");
+  if (s.source === "cli" && s.kind !== "opencode") subParts.push(s.kind === "chatgpt" ? "Codex CLI" : "Claude Code");
   const stateTitle = { ok: "Работает", warn: "Нужно внимание", error: "Ошибка", pending: "Проверка…" }[s.state];
 
   let h = `<div class="acc-head">${pi(s.kind)}
@@ -331,6 +335,8 @@ function accountHtml(s) {
 
   if (!s.updated_at) {
     h += `<div class="card"><div class="skeleton" style="width:40%"></div><div class="skeleton" style="width:75%"></div><div class="skeleton" style="width:60%"></div></div>`;
+  } else if (s.kind === "opencode") {
+    h += freeHtml(s) + serviceHtml(s);
   } else if (isGateway(s.kind)) {
     h += gatewayHtml(s);
   } else {
@@ -345,6 +351,7 @@ function accountHtml(s) {
 
   h += `<div class="acts">
     ${s.link ? `<button class="btn" data-act="open" data-url="${esc(s.link)}">${ICONS.external}Открыть</button>` : ""}
+    ${siteButton(s)}
     <button class="btn ghost" data-act="rename" title="Переименовать">${ICONS.edit}</button>
     <button class="btn ghost" data-act="left" title="Переместить влево">${ICONS.moveL}</button>
     <button class="btn ghost" data-act="right" title="Переместить вправо">${ICONS.moveR}</button>
@@ -372,17 +379,67 @@ function gatewayHtml(s) {
       <div class="hero"><div><div class="v" data-count="${b.amount}" data-fmt="usd" data-key="${esc(s.id)}-bal">${esc(money(b.amount))}</div>
       ${sub.length ? `<div class="sub">${sub.join(" · ")}</div>` : ""}</div></div></div>`;
   }
-  if (s.spend) h += spendHtml(s);
-  const svc = s.service;
-  if (svc) {
-    const st = !svc.up ? "error"
-      : (svc.issues && svc.issues.length) || (svc.code && svc.code >= 400 && svc.code !== 401) ? "warn" : "ok";
-    h += `<div class="card"><h4>Доступность API <em class="num">${svc.latency_ms != null ? svc.latency_ms + " ms" : ""}</em></h4>
-      <div class="svc"><i class="dot ${st}"></i><span class="m" title="${esc(svc.message)}">${esc(svc.message)}</span></div>
-      ${sparkline(s.history || [])}
-      ${componentsHtml(svc.components || [], s.kind)}
-      ${modelsNote(svc, s.kind)}</div>`;
+  if (!b && s.session === "none") {
+    h += `<div class="card"><h4>Баланс</h4><div class="empty-note" style="padding:6px 0 10px">Сайт отдаёт баланс и тариф только после входа в аккаунт</div>
+      <button class="btn primary block" data-act="site-login">${ICONS.external}Войти на сайт</button></div>`;
   }
+  if (s.spend) h += spendHtml(s);
+  return h + serviceHtml(s);
+}
+
+/** Website sign-in for accounts whose balance has no API (Unjailed AI). */
+function siteButton(s) {
+  if (s.kind !== "unjailed" || !s.session || s.session === "none") return "";
+  return s.session === "expired"
+    ? `<button class="btn" data-act="site-login" title="Сессия на сайте закончилась">${ICONS.external}Войти снова</button>`
+    : `<button class="btn ghost" data-act="site-logout" title="Выйти с сайта: забыть сессию (баланс перестанет обновляться)">${ICONS.logout}</button>`;
+}
+
+function serviceHtml(s) {
+  const svc = s.service;
+  if (!svc) return "";
+  const st = !svc.up ? "error"
+    : (svc.issues && svc.issues.length) || (svc.code && svc.code >= 400 && svc.code !== 401) ? "warn" : "ok";
+  const title = s.kind === "opencode" ? "Доступность Zen" : "Доступность API";
+  return `<div class="card"><h4>${title} <em class="num">${svc.latency_ms != null ? svc.latency_ms + " ms" : ""}</em></h4>
+    <div class="svc"><i class="dot ${st}"></i><span class="m" title="${esc(svc.message)}">${esc(svc.message)}</span></div>
+    ${sparkline(s.history || [])}
+    ${componentsHtml(svc.components || [], s.kind, s.id)}
+    ${modelsNote(svc, s.kind)}</div>`;
+}
+
+/** OpenCode free models: usage from the local OpenCode history. */
+function freeHtml(s) {
+  const f = s.free;
+  if (!f) return "";
+  const used = f.models.filter((m) => m.requests_7d || m.limit_at);
+  const idle = f.models.filter((m) => !m.requests_7d && !m.limit_at && m.available);
+  const sum5 = used.reduce((a, m) => a + m.requests_5h, 0);
+  const sum24 = used.reduce((a, m) => a + m.requests_24h, 0);
+  let h = `<div class="card"><h4>Бесплатные модели <em class="num">5 ч: ${sum5} · сутки: ${sum24}</em></h4>`;
+  if (!f.sources.length) {
+    h += `<div class="empty-note" style="padding:6px 0">История OpenCode на этом компьютере не найдена. Она появится после первого запроса в OpenCode.</div>`;
+  } else if (!used.length) {
+    h += `<div class="empty-note" style="padding:6px 0">За 7 дней запросов к бесплатным моделям не было</div>`;
+  }
+  h += used
+    .map((m) => {
+      const st = m.limited
+        ? `<em class="st error">лимит${m.limited_until ? ` · сброс <b data-until="${m.limited_until}"></b>` : ""}</em>`
+        : m.available ? `<em class="st">доступна</em>` : `<em class="st">убрана из Zen</em>`;
+      const past = m.limit_at
+        ? `<div class="d">Лимит был ${esc(clock(m.limit_at))}${m.limit_after_5h != null ? ` — после ${m.limit_after_5h} запр. за 5 ч до него` : ""}</div>`
+        : "";
+      return `<div class="fm${m.limited ? " lim" : ""}"><div class="top"><span class="n"><i class="dot ${m.limited ? "error" : "ok"}"></i>${esc(m.id)}</span>${st}</div>
+        <div class="r"><span>5 ч: <b>${m.requests_5h}</b></span><span>сутки: <b>${m.requests_24h}</b></span><span>7 дней: <b>${m.requests_7d}</b></span>
+        ${m.last_used_at ? `<span class="muted">последний ${esc(clock(m.last_used_at))}</span>` : ""}</div>${past}</div>`;
+    })
+    .join("");
+  if (idle.length) {
+    h += `<div class="section-label" style="margin:12px 0 6px">Доступны сейчас</div><div class="chips">${idle
+      .map((m) => `<span class="chip">${esc(m.id)}</span>`).join("")}</div>`;
+  }
+  h += `<div class="hint" style="margin-top:10px">OpenCode не сообщает остаток бесплатного лимита — счётчики собраны по локальной истории, а лимит виден, когда OpenCode получил отказ.</div></div>`;
   return h;
 }
 
@@ -451,7 +508,12 @@ function sparkline(hist) {
 /** Explains why there is no per-model block (the provider publishes nothing). */
 function modelsNote(svc, kind) {
   if ((svc.components || []).length) return "";
-  const text = (kind === "nanogpt"
+  const text = (kind === "unjailed"
+    ? {
+      empty: "Unjailed AI сейчас не публикует статус моделей",
+      unavailable: "Статус моделей Unjailed AI недоступен — известна только доступность API",
+    }
+    : kind === "nanogpt"
     ? {
       empty: "На статус-странице NanoGPT нет сервисов — состояние неизвестно",
       unavailable: "Статус-страница NanoGPT недоступна — известна только доступность API",
@@ -463,7 +525,7 @@ function modelsNote(svc, kind) {
   return text ? `<div class="models-note">${ICONS.info}<span>${esc(text)}</span></div>` : "";
 }
 
-function componentsHtml(list, kind) {
+function componentsHtml(list, kind, id) {
   if (!list.length) return "";
   // (kept inside: module-level consts are not initialised yet on the first render)
   const FAMILY_STATE = {
@@ -478,25 +540,35 @@ function componentsHtml(list, kind) {
   const rank = { down: 0, degraded: 1, maintenance: 2, stale: 3, unknown: 4, ok: 5 };
   const sorted = [...list].sort((a, b) => (rank[a.state] ?? 6) - (rank[b.state] ?? 6) || a.name.localeCompare(b.name));
   const daily = list.some((c) => c.granularity === "days");
+  const live = list.some((c) => c.granularity === "now");
   const source = KINDS[kind]?.title || "провайдера";
-  const head = daily ? "Сервисы · статус-страница" : "Модели · последние пробы";
-  const uptimeTip = daily ? `Доступность по данным статус-страницы ${source}` : `Доступность за 30 дней по данным ${source}`;
+  const head = daily ? "Сервисы · статус-страница" : live ? "Модели · сейчас" : "Модели · последние пробы";
+  const uptimeTip = daily ? `Доступность по данным статус-страницы ${source}`
+    : live ? `Наблюдаемая доступность по данным ${source}` : `Доступность за 30 дней по данным ${source}`;
   const seriesTip = daily
     ? "Последние дни: зелёный — без сбоев, красный — были сбои или перебои"
     : "Последние пробы: зелёный — успешно, красный — ошибка";
-  return `<div class="section-label" style="margin:12px 0 4px">${head}</div><div class="comp">${sorted
-    .map((c) => {
-      const [cls, label] = FAMILY_STATE[c.state] || FAMILY_STATE.unknown;
-      const name = c.name.replace(/ upstream$/, "");
-      const ticks = (c.recent || [])
-        .map((ok) => `<i class="${ok ? "" : "e"}"></i>`)
-        .join("");
-      const probed = c.last_probe_at ? ` · проба ${clock(c.last_probe_at)}` : "";
-      return `<span class="n"><i class="dot ${cls}"></i>${esc(name)} <em class="st ${cls}">${label}</em></span>
-        <span class="u" title="${esc(uptimeTip + probed)}">${c.uptime.toFixed(1)}%</span>
-        ${ticks ? `<div class="series" title="${seriesTip}">${ticks}</div>` : ""}`;
-    })
-    .join("")}</div>`;
+  const row = (c) => {
+    const [cls, label] = FAMILY_STATE[c.state] || FAMILY_STATE.unknown;
+    const name = c.name.replace(/ upstream$/, "");
+    const ticks = (c.recent || [])
+      .map((ok) => `<i class="${ok ? "" : "e"}"></i>`)
+      .join("");
+    const probed = c.last_probe_at ? ` · проба ${clock(c.last_probe_at)}` : "";
+    const lat = c.latency_s != null ? ` <em class="st" title="Среднее время ответа">${c.latency_s.toFixed(1)} с</em>` : "";
+    return `<span class="n"><i class="dot ${cls}"></i>${esc(name)} <em class="st ${cls}">${label}</em>${lat}</span>
+      <span class="u" title="${esc(uptimeTip + probed)}">${c.uptime.toFixed(1)}%</span>
+      ${ticks ? `<div class="series" title="${seriesTip}">${ticks}</div>` : ""}`;
+  };
+  // long lists (Unjailed: 30+ models): problems stay visible, the rest folds
+  const label = `<div class="section-label" style="margin:12px 0 4px">${head}</div>`;
+  if (sorted.length <= 10) return `${label}<div class="comp">${sorted.map(row).join("")}</div>`;
+  const bad = sorted.filter((c) => c.state !== "ok");
+  const good = sorted.filter((c) => c.state === "ok");
+  const open = id && S.moreOpen.has(id) ? " open" : "";
+  return `${label}${bad.length ? `<div class="comp">${bad.map(row).join("")}</div>` : ""}
+    <details class="comp-more" data-more="${esc(id || "")}"${open}><summary>${bad.length ? "Ещё" : "Все"} ${good.length} работают</summary>
+    <div class="comp">${good.map(row).join("")}</div></details>`;
 }
 
 function limitsHtml(s) {
@@ -552,7 +624,9 @@ function addPageHtml() {
     <div class="section-label" style="${first ? "" : "margin-top:6px"}">Шлюзы · API-ключ</div>
     <div class="grid">${KIND_ORDER.filter(isGateway).map(tile).join("")}</div>
     <div class="section-label">Подписки · вход через аккаунт</div>
-    <div class="grid">${KIND_ORDER.filter((k) => !isGateway(k)).map(tile).join("")}</div>
+    <div class="grid">${KIND_ORDER.filter((k) => !isGateway(k) && KINDS[k].auth !== "local").map(tile).join("")}</div>
+    <div class="section-label">Локально · без входа</div>
+    <div class="grid">${KIND_ORDER.filter((k) => KINDS[k].auth === "local").map(tile).join("")}</div>
     ${api.demo ? `<div class="hint" style="text-align:center;margin-top:14px">Демо-режим: открыт в браузере без Tauri</div>` : ""}`;
 }
 
@@ -566,6 +640,9 @@ function bindPage(page, id) {
     $$("[data-add]", page).forEach((b) => b.addEventListener("click", () => openAdd(b.dataset.add)));
     return;
   }
+  $$("details[data-more]", page).forEach((d) =>
+    d.addEventListener("toggle", () => (d.open ? S.moreOpen.add(id) : S.moreOpen.delete(id))),
+  );
   $$("[data-act]", page).forEach((b) =>
     b.addEventListener("click", () => {
       const s = S.snaps.find((x) => x.id === id);
@@ -573,6 +650,8 @@ function bindPage(page, id) {
       const act = b.dataset.act;
       if (act === "open") api.invoke("open_url", { url: b.dataset.url });
       if (act === "rename") renameDialog(s);
+      if (act === "site-login") siteLogin(s, b);
+      if (act === "site-logout") api.invoke("site_logout", { id }).then(() => toast("Сессия сайта забыта")).catch(toast);
       if (act === "remove") removeDialog(s);
       if (act === "left" || act === "right") {
         api.invoke("move_account", { id, delta: act === "left" ? -1 : 1 }).catch(toast);
@@ -784,8 +863,23 @@ function removeDialog(s) {
 
 // ---------------------------------------------------------------- add account
 
+function siteLogin(s, btn) {
+  btn.disabled = true;
+  toast("Войдите в открывшемся окне — после входа оно закроется само");
+  api.invoke("site_login", { id: s.id })
+    .then(() => toast("Вход выполнен, баланс обновляется"))
+    .catch((e) => toast(String(e)))
+    .finally(() => (btn.disabled = false));
+}
+
 function openAdd(kind) {
   const k = KINDS[kind];
+  if (k.auth === "local") {
+    api.invoke("add_local_account", { kind })
+      .then((id) => { closeOverlays(); toast("Добавлено"); selectLater(id); })
+      .catch(toast);
+    return;
+  }
   if (k.auth === "key") {
     openSheet(
       k.title,
