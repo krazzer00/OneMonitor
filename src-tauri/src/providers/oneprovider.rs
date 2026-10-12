@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use reqwest::Client;
 use serde_json::Value;
 
-use super::{send, Resp};
-use crate::model::{Account, Balance, Component, DayCost, ModelCost, Service, Snapshot, Spend};
+use super::{remember_balance, restore_last_balance, send, spend_from_days, Resp};
+use crate::model::{Account, Balance, Component, ModelCost, Service, Snapshot, Spend};
 use crate::util::{num, parse_time, Res};
 
 const BASE: &str = "https://api.oneprovider.dev";
@@ -175,12 +175,7 @@ pub async fn fetch(http: &Client, acc: &mut Account, snap: &mut Snapshot) -> Res
         None => {}
     }
 
-    if let (Some(spend), Some(b)) = (snap.spend.as_mut(), snap.balance.as_ref()) {
-        let per_day = spend.week / 7.0;
-        if per_day > 0.01 && !b.stale {
-            spend.forecast_days = Some(b.amount / per_day);
-        }
-    }
+    super::add_forecast(snap);
     Ok(())
 }
 
@@ -190,7 +185,7 @@ fn cost_of(v: &Value) -> f64 {
 }
 
 fn parse_usage(v: &Value) -> Spend {
-    use chrono::{Duration, NaiveDate};
+    use chrono::NaiveDate;
 
     let mut by_day: std::collections::BTreeMap<NaiveDate, (f64, u64)> = Default::default();
     for d in v.get("daily_usage").and_then(Value::as_array).into_iter().flatten() {
@@ -215,24 +210,6 @@ fn parse_usage(v: &Value) -> Spend {
             (cost_of(t), t.get("requests").and_then(Value::as_u64).unwrap_or(0)),
         );
     }
-    let sum_since = |days: i64| -> f64 {
-        let from = today - Duration::days(days - 1);
-        by_day.range(from..).map(|(_, (c, _))| c).sum()
-    };
-
-    let daily = (0..14)
-        .rev()
-        .map(|i| {
-            let date = today - Duration::days(i);
-            let (cost, requests) = by_day.get(&date).copied().unwrap_or_default();
-            DayCost {
-                date: date.format("%Y-%m-%d").to_string(),
-                cost,
-                requests,
-            }
-        })
-        .collect();
-
     let mut top_models: Vec<ModelCost> = v
         .get("model_stats")
         .and_then(Value::as_array)
@@ -249,24 +226,12 @@ fn parse_usage(v: &Value) -> Spend {
     top_models.sort_by(|a, b| b.cost.total_cmp(&a.cost));
     top_models.truncate(3);
 
-    let (today_cost, today_requests) = by_day.get(&today).copied().unwrap_or_default();
-    Spend {
-        currency: v
-            .get("unit")
-            .and_then(Value::as_str)
-            .unwrap_or("USD")
-            .to_owned(),
-        today: today_cost,
-        today_requests,
-        week: sum_since(7),
-        month: sum_since(30),
-        daily,
-        top_models,
-        forecast_days: None,
-        quota_limit: num(v.pointer("/quota/limit")),
-        quota_used: num(v.pointer("/quota/used")),
-        quota_remaining: num(v.pointer("/quota/remaining")).or_else(|| num(v.get("remaining"))),
-    }
+    let mut spend = spend_from_days(&by_day, today, top_models);
+    spend.currency = v.get("unit").and_then(Value::as_str).unwrap_or("USD").to_owned();
+    spend.quota_limit = num(v.pointer("/quota/limit"));
+    spend.quota_used = num(v.pointer("/quota/used"));
+    spend.quota_remaining = num(v.pointer("/quota/remaining")).or_else(|| num(v.get("remaining")));
+    spend
 }
 
 fn service_from_probe(probe: &Res<Resp>, has_key: bool) -> Service {
@@ -404,6 +369,7 @@ fn parse_families(v: &Value, now: i64) -> Vec<Component> {
                 last_probe_at,
                 state,
                 recent,
+                granularity: String::new(),
             })
         })
         .collect()
@@ -459,35 +425,6 @@ fn find_num(v: &Value, keys: &[&str], depth: usize) -> Option<f64> {
         }
     }
     None
-}
-
-/// Keeps the last successfully read balance in the account metadata so it can
-/// be shown (marked as stale) while the provider's endpoint is unavailable.
-fn remember_balance(acc: &mut Account, amount: f64) {
-    let changed = acc
-        .meta
-        .get("last_balance")
-        .and_then(Value::as_f64)
-        .map_or(true, |old| (old - amount).abs() > 1e-9);
-    let at = acc.meta.get("last_balance_at").and_then(Value::as_i64).unwrap_or(0);
-    // write at most every 30 minutes when the value is unchanged
-    if changed || crate::util::now() - at > 1800 {
-        acc.set_meta("last_balance", amount);
-        acc.set_meta("last_balance_at", crate::util::now());
-    }
-}
-
-fn restore_last_balance(acc: &Account, snap: &mut Snapshot) {
-    let Some(amount) = acc.meta.get("last_balance").and_then(Value::as_f64) else {
-        return;
-    };
-    snap.balance = Some(Balance {
-        amount,
-        currency: "USD".into(),
-        as_of: acc.meta.get("last_balance_at").and_then(Value::as_i64),
-        stale: true,
-        ..Default::default()
-    });
 }
 
 #[cfg(test)]

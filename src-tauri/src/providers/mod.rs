@@ -1,6 +1,7 @@
 pub mod antigravity;
 pub mod chatgpt;
 pub mod claude;
+pub mod nanogpt;
 pub mod oneprovider;
 
 use std::time::{Duration, Instant};
@@ -66,6 +67,7 @@ pub async fn fetch(http: &Client, acc: Account, settings: &Settings) -> Outcome 
         Kind::ChatGpt => chatgpt::fetch(http, &mut acc, &mut snap).await,
         Kind::Claude => claude::fetch(http, &mut acc, &mut snap).await,
         Kind::Antigravity => antigravity::fetch(http, &mut acc, &mut snap).await,
+        Kind::NanoGpt => nanogpt::fetch(http, &mut acc, &mut snap).await,
     };
     if let Err(e) = result {
         snap.error = Some(e);
@@ -144,6 +146,81 @@ pub fn pretty_plan(raw: &str) -> String {
         }
     }
     out
+}
+
+/// Builds spending statistics from per-day totals (cost, requests).
+pub fn spend_from_days(
+    by_day: &std::collections::BTreeMap<chrono::NaiveDate, (f64, u64)>,
+    today: chrono::NaiveDate,
+    top_models: Vec<crate::model::ModelCost>,
+) -> crate::model::Spend {
+    use chrono::Duration;
+    let sum_since = |days: i64| -> f64 {
+        let from = today - Duration::days(days - 1);
+        by_day.range(from..).map(|(_, (c, _))| c).sum()
+    };
+    let daily = (0..14)
+        .rev()
+        .map(|i| {
+            let date = today - Duration::days(i);
+            let (cost, requests) = by_day.get(&date).copied().unwrap_or_default();
+            crate::model::DayCost {
+                date: date.format("%Y-%m-%d").to_string(),
+                cost,
+                requests,
+            }
+        })
+        .collect();
+    let (today_cost, today_requests) = by_day.get(&today).copied().unwrap_or_default();
+    crate::model::Spend {
+        currency: "USD".into(),
+        today: today_cost,
+        today_requests,
+        week: sum_since(7),
+        month: sum_since(30),
+        daily,
+        top_models,
+        ..Default::default()
+    }
+}
+
+/// How many days the balance lasts at the average spend of the last 7 days.
+pub fn add_forecast(snap: &mut Snapshot) {
+    if let (Some(spend), Some(b)) = (snap.spend.as_mut(), snap.balance.as_ref()) {
+        let per_day = spend.week / 7.0;
+        if per_day > 0.01 && !b.stale {
+            spend.forecast_days = Some(b.amount / per_day);
+        }
+    }
+}
+
+/// Keeps the last successfully read balance in the account metadata so it can
+/// be shown (marked as stale) while the provider's endpoint is unavailable.
+pub fn remember_balance(acc: &mut Account, amount: f64) {
+    let changed = acc
+        .meta
+        .get("last_balance")
+        .and_then(Value::as_f64)
+        .map_or(true, |old| (old - amount).abs() > 1e-9);
+    let at = acc.meta.get("last_balance_at").and_then(Value::as_i64).unwrap_or(0);
+    // write at most every 30 minutes when the value is unchanged
+    if changed || now() - at > 1800 {
+        acc.set_meta("last_balance", amount);
+        acc.set_meta("last_balance_at", now());
+    }
+}
+
+pub fn restore_last_balance(acc: &Account, snap: &mut Snapshot) {
+    let Some(amount) = acc.meta.get("last_balance").and_then(Value::as_f64) else {
+        return;
+    };
+    snap.balance = Some(crate::model::Balance {
+        amount,
+        currency: "USD".into(),
+        as_of: acc.meta.get("last_balance_at").and_then(Value::as_i64),
+        stale: true,
+        ..Default::default()
+    });
 }
 
 /// Projects when each windowed limit runs out at the average pace of the

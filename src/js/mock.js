@@ -57,6 +57,31 @@ let snapshots = [
     history: history(180, 40, [12]), link: "https://oneprovider.dev/status",
   },
   {
+    id: "a5", kind: "nanogpt", label: "NanoGPT", email: null, source: "apikey", state: "ok",
+    error: null, warning: null, updated_at: now() - 14, plan: "Подписка",
+    balance: { amount: 12.48, currency: "USD", total: null, used: null, expires_at: null, active: null },
+    limits: [
+      { key: "weeklyInputTokens", name: "Входные токены · неделя", used_percent: 46, resets_at: now() + 3 * 86400 + 7 * 3600, window_secs: 604800, detail: "27.6 млн из 60 млн токенов", pace_ok: true },
+      { key: "dailyInputTokens", name: "Входные токены · день", used_percent: 31, resets_at: now() + 9 * 3600, window_secs: 86400, detail: "3.1 млн из 10 млн токенов" },
+    ],
+    spend: {
+      currency: "USD", today: 0.12, today_requests: 214, week: 1.9, month: 6.4, forecast_days: 46, top_period: "30 дней",
+      daily: [0.4, 0.1, 0.3, 0, 0.9, 0.2, 0.5, 0.3, 0.1, 0.2, 0.6, 0.4, 0.2, 0.12].map((cost, i) => ({
+        date: new Date(Date.now() - (13 - i) * 86400000).toISOString().slice(0, 10), cost, requests: Math.round(cost * 900) + 20,
+      })),
+      top_models: [{ name: "GLM 5.1", cost: 3.1, requests: 2210 }, { name: "Kimi K3", cost: 2.2, requests: 1480 }, { name: "DeepSeek V4", cost: 0.7, requests: 960 }],
+    },
+    service: {
+      up: true, latency_ms: 236, code: 200, message: "API работает", issues: [], models_status: "ok",
+      components: [
+        { name: "nano-gpt.com", uptime: 99.87, state: "ok", granularity: "days", recent: [...Array(17).fill(true), false, ...Array(12).fill(true)] },
+        { name: "Zano deposits", uptime: 100, state: "ok", granularity: "days", recent: Array(30).fill(true) },
+      ],
+    },
+    notes: [{ label: "Подписка до", value: "05.11 03:00" }, { label: "Оплата запросов", value: "из подписки" }],
+    history: history(240, 40), link: "https://status.nano-gpt.com",
+  },
+  {
     id: "a2", kind: "chatgpt", label: "work@example.com", email: "work@example.com", source: "oauth", state: "ok",
     error: null, warning: null, updated_at: now() - 14, plan: "Plus", balance: null, service: null,
     limits: [

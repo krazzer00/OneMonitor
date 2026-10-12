@@ -34,7 +34,7 @@ function row(s) {
     sub = `<span title="${esc(s.error)}">${esc(s.error.slice(0, 28))}</span>`;
   } else if (!s.updated_at) {
     value = "…"; sub = "<span>проверка</span>";
-  } else if (isGateway(s.kind)) {
+  } else if (isGateway(s.kind) && !(s.limits || []).length) {
     const svc = s.service;
     if (s.balance) {
       value = (s.balance.stale ? "≈ " : "") + money(s.balance.amount);
@@ -57,6 +57,7 @@ function row(s) {
       value = Math.round(left) + "%";
       vcls = level(top.used_percent, settings.warn_percent ?? 85);
       sub = top.resets_at ? `<span data-until="${top.resets_at}">${esc(until(top.resets_at))}</span>` : "<span>осталось</span>";
+      if (s.balance && top.resets_at) sub = `<span>${esc(money(s.balance.amount))} · <b class="u" data-until="${top.resets_at}">${esc(until(top.resets_at))}</b></span>`;
       bar = { w: top.used_percent, cls: vcls };
     } else {
       value = "—";
@@ -65,7 +66,7 @@ function row(s) {
   const who = s.email && s.email !== s.label
     ? s.email
     : s.label === k.title || s.label.startsWith(k.title + " ")
-      ? (isGateway(s.kind) ? "Шлюз" : s.plan || k.title)
+      ? (isGateway(s.kind) ? s.plan || "Шлюз" : s.plan || k.title)
       : [k.title, s.plan].filter(Boolean).join(" · ");
   return `<div class="prow" data-id="${esc(s.id)}">${pi(s.kind)}
     <div class="who"><div class="l">${esc(s.label)}</div><div class="s">${esc(who)}</div></div>

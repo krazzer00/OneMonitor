@@ -35,6 +35,7 @@
 .prow .v b.warn { color: var(--warn); }
 .prow .v b.error { color: var(--err); }
 .prow .v span { display: block; color: var(--text-3); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.prow .v span b.u { display: inline; font: inherit; color: inherit; }
 .prow .mini { grid-column: 2 / -1; height: 3px; margin-top: -3px; border-radius: 2px; background: rgba(255,255,255,.07); overflow: hidden; }
 .prow .mini i { display: block; height: 100%; border-radius: 2px; background: var(--ok); }
 .prow .mini i.warn { background: var(--warn); }

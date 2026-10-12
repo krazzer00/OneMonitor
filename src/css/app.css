@@ -227,6 +227,7 @@ svg { display: block; }
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 2px 8px color-mix(in srgb, var(--pc) 35%, transparent);
 }
 .pi.oneprovider { --pc: #8b5cf6; }
+.pi.nanogpt { --pc: #db2777; }
 .pi.chatgpt { --pc: #10a37f; }
 .pi.claude { --pc: #d97757; }
 .pi.antigravity { --pc: #3b82f6; }
