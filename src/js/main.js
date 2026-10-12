@@ -117,7 +117,7 @@ function listRowHtml(s) {
     value = "Ошибка"; cls = "error"; sub = s.error;
   } else if (!s.updated_at) {
     sub = "проверка";
-  } else if (isGateway(s.kind)) {
+  } else if (isGateway(s.kind) && !(s.limits || []).length) {
     const svc = s.service;
     if (s.balance) {
       value = (s.balance.stale ? "≈ " : "") + money(s.balance.amount);
@@ -136,13 +136,14 @@ function listRowHtml(s) {
       value = Math.round(Math.max(0, 100 - top.used_percent)) + "%";
       cls = level(top.used_percent, S.settings.warn_percent ?? 85);
       sub = top.resets_at ? "сброс " + until(top.resets_at) : top.name;
+      if (s.balance) sub = `${money(s.balance.amount)} · ${sub}`;
       bar = { w: top.used_percent, cls };
     } else value = "—";
   }
   const who = s.email && s.email !== s.label
     ? s.email
     : s.label === k.title || s.label.startsWith(k.title + " ")
-      ? (isGateway(s.kind) ? "Шлюз" : s.plan || k.title)
+      ? (isGateway(s.kind) ? s.plan || "Шлюз" : s.plan || k.title)
       : [k.title, s.plan].filter(Boolean).join(" · ");
   return `<button class="lrow" data-id="${esc(s.id)}">${pi(s.kind)}
     <span class="who"><span class="l">${esc(s.label)}</span><span class="s">${esc(who)}</span></span>
@@ -315,7 +316,7 @@ function accountHtml(s) {
   const subParts = [];
   if (s.email && s.email !== s.label) subParts.push(s.email);
   else if (s.label === k.title || s.label.startsWith(k.title + " ")) {
-    subParts.push(isGateway(s.kind) ? (s.notes || []).some((n) => n.label === "Режим") ? "Только статус" : "API-ключ" : k.title);
+    subParts.push(isGateway(s.kind) ? (s.notes || []).some((n) => n.label === "Режим" && n.value.startsWith("только статус")) ? "Только статус" : "API-ключ" : k.title);
   } else subParts.push(k.title);
   if (s.source === "cli") subParts.push(s.kind === "chatgpt" ? "Codex CLI" : "Claude Code");
   const stateTitle = { ok: "Работает", warn: "Нужно внимание", error: "Ошибка", pending: "Проверка…" }[s.state];
@@ -354,7 +355,8 @@ function accountHtml(s) {
 }
 
 function gatewayHtml(s) {
-  let h = "";
+  // gateways with a subscription (NanoGPT) show its quotas first
+  let h = (s.limits || []).length ? limitsHtml(s) : "";
   const b = s.balance;
   if (b) {
     const low = b.amount < (S.settings.low_balance ?? 1);
@@ -378,8 +380,8 @@ function gatewayHtml(s) {
     h += `<div class="card"><h4>Доступность API <em class="num">${svc.latency_ms != null ? svc.latency_ms + " ms" : ""}</em></h4>
       <div class="svc"><i class="dot ${st}"></i><span class="m" title="${esc(svc.message)}">${esc(svc.message)}</span></div>
       ${sparkline(s.history || [])}
-      ${componentsHtml(svc.components || [])}
-      ${modelsNote(svc)}</div>`;
+      ${componentsHtml(svc.components || [], s.kind)}
+      ${modelsNote(svc, s.kind)}</div>`;
   }
   return h;
 }
@@ -414,7 +416,7 @@ function spendHtml(s) {
     <div class="spend-sum"><div><span>7 дней</span><b class="num">${esc(money(sp.week))}</b></div><div><span>30 дней</span><b class="num">${esc(money(sp.month))}</b></div>
     <div><span title="Средний расход за последние 7 дней">В день</span><b class="num">${esc(money(sp.week / 7))}</b></div></div>
     ${forecast}
-    ${top ? `<div class="section-label" style="margin:12px 0 6px">Топ моделей · всё время</div><dl class="kv">${top}</dl>` : ""}</div>`;
+    ${top ? `<div class="section-label" style="margin:12px 0 6px">Топ моделей · ${esc(sp.top_period || "всё время")}</div><dl class="kv">${top}</dl>` : ""}</div>`;
 }
 
 function sparkline(hist) {
@@ -447,29 +449,42 @@ function sparkline(hist) {
 }
 
 /** Explains why there is no per-model block (the provider publishes nothing). */
-function modelsNote(svc) {
+function modelsNote(svc, kind) {
   if ((svc.components || []).length) return "";
-  const text = {
-    empty: "OneProvider сейчас не публикует данные по моделям — состояние отдельных моделей неизвестно",
-    unavailable: "Статус моделей OneProvider недоступен — состояние отдельных моделей неизвестно",
-  }[svc.models_status];
+  const text = (kind === "nanogpt"
+    ? {
+      empty: "На статус-странице NanoGPT нет сервисов — состояние неизвестно",
+      unavailable: "Статус-страница NanoGPT недоступна — известна только доступность API",
+    }
+    : {
+      empty: "OneProvider сейчас не публикует данные по моделям — состояние отдельных моделей неизвестно",
+      unavailable: "Статус моделей OneProvider недоступен — состояние отдельных моделей неизвестно",
+    })[svc.models_status];
   return text ? `<div class="models-note">${ICONS.info}<span>${esc(text)}</span></div>` : "";
 }
 
-function componentsHtml(list) {
+function componentsHtml(list, kind) {
   if (!list.length) return "";
   // (kept inside: module-level consts are not initialised yet on the first render)
   const FAMILY_STATE = {
     ok: ["ok", "работает"],
     degraded: ["warn", "перебои"],
     down: ["error", "сбой"],
+    maintenance: ["pending", "обслуживание"],
     stale: ["pending", "нет свежих проб"],
     unknown: ["pending", "нет данных"],
   };
   // problems first, then by name
-  const rank = { down: 0, degraded: 1, stale: 2, unknown: 3, ok: 4 };
-  const sorted = [...list].sort((a, b) => (rank[a.state] ?? 5) - (rank[b.state] ?? 5) || a.name.localeCompare(b.name));
-  return `<div class="section-label" style="margin:12px 0 4px">Модели · последние пробы</div><div class="comp">${sorted
+  const rank = { down: 0, degraded: 1, maintenance: 2, stale: 3, unknown: 4, ok: 5 };
+  const sorted = [...list].sort((a, b) => (rank[a.state] ?? 6) - (rank[b.state] ?? 6) || a.name.localeCompare(b.name));
+  const daily = list.some((c) => c.granularity === "days");
+  const source = KINDS[kind]?.title || "провайдера";
+  const head = daily ? "Сервисы · статус-страница" : "Модели · последние пробы";
+  const uptimeTip = daily ? `Доступность по данным статус-страницы ${source}` : `Доступность за 30 дней по данным ${source}`;
+  const seriesTip = daily
+    ? "Последние дни: зелёный — без сбоев, красный — были сбои или перебои"
+    : "Последние пробы: зелёный — успешно, красный — ошибка";
+  return `<div class="section-label" style="margin:12px 0 4px">${head}</div><div class="comp">${sorted
     .map((c) => {
       const [cls, label] = FAMILY_STATE[c.state] || FAMILY_STATE.unknown;
       const name = c.name.replace(/ upstream$/, "");
@@ -478,8 +493,8 @@ function componentsHtml(list) {
         .join("");
       const probed = c.last_probe_at ? ` · проба ${clock(c.last_probe_at)}` : "";
       return `<span class="n"><i class="dot ${cls}"></i>${esc(name)} <em class="st ${cls}">${label}</em></span>
-        <span class="u" title="Доступность за 30 дней по данным OneProvider${esc(probed)}">${c.uptime.toFixed(1)}%</span>
-        ${ticks ? `<div class="series" title="Последние пробы: зелёный — успешно, красный — ошибка">${ticks}</div>` : ""}`;
+        <span class="u" title="${esc(uptimeTip + probed)}">${c.uptime.toFixed(1)}%</span>
+        ${ticks ? `<div class="series" title="${seriesTip}">${ticks}</div>` : ""}`;
     })
     .join("")}</div>`;
 }
@@ -782,6 +797,7 @@ function openAdd(kind) {
        <button class="btn primary block" id="f-add">Добавить</button>
        <div class="err-text" id="f-err"></div>
        <div class="hint">Без ключа будет отслеживаться только доступность API. Ключ хранится локально, зашифрован Windows DPAPI.
+        ${k.keyHint ? `<br/>${esc(k.keyHint)}` : ""}
         <br/><a data-url="${esc(k.keyHelp.url)}">${esc(k.keyHelp.text)}</a></div>`,
       (b) => {
         const key = $("#f-key", b);

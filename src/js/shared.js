@@ -27,6 +27,13 @@ export const KINDS = {
     auth: "key",
     keyHelp: { text: "Ключ выдаёт @oneprovider_robot", url: "https://t.me/oneprovider_robot" },
   },
+  nanogpt: {
+    title: "NanoGPT",
+    desc: "Подписка, баланс и статус",
+    auth: "key",
+    keyHelp: { text: "Ключ создаётся на nano-gpt.com/api", url: "https://nano-gpt.com/api" },
+    keyHint: "Подойдёт и management-токен «Usage only» (sk-nano-mgmt-…): он видит только квоты подписки и не может тратить баланс.",
+  },
   chatgpt: {
     title: "ChatGPT",
     desc: "Лимиты подписки (Codex)",
@@ -47,14 +54,15 @@ export const KINDS = {
     auth: "oauth",
   },
 };
-export const KIND_ORDER = ["oneprovider", "chatgpt", "claude", "antigravity"];
-export const isGateway = (k) => k === "oneprovider";
+export const KIND_ORDER = ["oneprovider", "nanogpt", "chatgpt", "claude", "antigravity"];
+export const isGateway = (k) => k === "oneprovider" || k === "nanogpt";
 
 const svg = (body, sw = 2) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
 
 export const PROVIDER_ICONS = {
   oneprovider: svg('<path d="M9.5 8.5 13 6v12"/><path d="M9.5 18h7"/>', 2.3),
+  nanogpt: svg('<path d="M7 18V6l10 12V6"/>', 2.3),
   chatgpt: svg('<path d="M12 2.8 20 7.4v9.2l-8 4.6-8-4.6V7.4z"/><path d="M12 7.5v9M8.1 9.75l7.8 4.5M15.9 9.75l-7.8 4.5"/>', 1.9),
   claude: svg('<path d="M12 3.5v17M3.5 12h17M6 6l12 12M18 6 6 18"/>', 2.2),
   antigravity: svg('<path d="M3.5 20C5.5 10.5 8.3 4.5 12 4.5S18.5 10.5 20.5 20"/><path d="M8.5 20c1-3.6 2.1-5.5 3.5-5.5s2.5 1.9 3.5 5.5"/>', 2.1),

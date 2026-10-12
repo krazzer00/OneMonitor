@@ -8,6 +8,7 @@ pub enum Kind {
     ChatGpt,
     Claude,
     Antigravity,
+    NanoGpt,
 }
 
 impl Kind {
@@ -17,11 +18,12 @@ impl Kind {
             Kind::ChatGpt => "ChatGPT",
             Kind::Claude => "Claude",
             Kind::Antigravity => "Antigravity",
+            Kind::NanoGpt => "NanoGPT",
         }
     }
 
     pub fn is_gateway(self) -> bool {
-        matches!(self, Kind::OneProvider)
+        matches!(self, Kind::OneProvider | Kind::NanoGpt)
     }
 }
 
@@ -171,10 +173,13 @@ pub struct Component {
     pub uptime: f64,
     pub series: Vec<f64>,
     pub last_probe_at: Option<i64>,
-    /// Current state derived from the latest probes: ok | degraded | down | stale | unknown
+    /// Current state: ok | degraded | down | maintenance | stale | unknown
     pub state: String,
-    /// Outcome of each recent probe interval, oldest first: true = ok.
+    /// Outcome of each recent probe interval (or day), oldest first: true = ok.
     pub recent: Vec<bool>,
+    /// Where the data comes from: "probes" (recent probes) or "days" (daily
+    /// history of a status page). Empty = probes.
+    pub granularity: String,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -221,7 +226,7 @@ pub struct ModelCost {
     pub requests: u64,
 }
 
-/// Spending statistics (OneProvider `/v1/usage`).
+/// Spending statistics (OneProvider / NanoGPT `/v1/usage`).
 #[derive(Serialize, Clone, Debug, Default)]
 pub struct Spend {
     pub currency: String,
@@ -231,8 +236,10 @@ pub struct Spend {
     pub month: f64,
     /// Last 14 calendar days, oldest first, gaps filled with zeros.
     pub daily: Vec<DayCost>,
-    /// Most expensive models over the whole history.
+    /// Most expensive models over `top_period`.
     pub top_models: Vec<ModelCost>,
+    /// Period of `top_models` as shown in the UI; empty = the whole history.
+    pub top_period: String,
     /// How many days the balance lasts at the average spend of the last 7 days.
     pub forecast_days: Option<f64>,
     /// Quota as reported by the usage endpoint. It is a different metric from

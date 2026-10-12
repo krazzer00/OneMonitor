@@ -1,7 +1,7 @@
 [package]
 name = "onemonitor"
-version = "0.2.3"
-description = "Tray monitor for OneProvider / OpenRouter status & balance and ChatGPT / Claude / Antigravity subscription limits"
+version = "0.2.4"
+description = "Tray monitor for OneProvider / NanoGPT status & balance and ChatGPT / Claude / Antigravity / NanoGPT subscription limits"
 authors = ["OneMonitor"]
 license = "MIT"
 edition = "2021"
