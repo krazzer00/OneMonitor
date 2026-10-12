@@ -34,6 +34,18 @@ export const KINDS = {
     keyHelp: { text: "Ключ создаётся на nano-gpt.com/api", url: "https://nano-gpt.com/api" },
     keyHint: "Подойдёт и management-токен «Usage only» (sk-nano-mgmt-…): он видит только квоты подписки и не может тратить баланс.",
   },
+  unjailed: {
+    title: "Unjailed AI",
+    desc: "Статус моделей и баланс",
+    auth: "key",
+    keyHelp: { text: "Ключ создаётся в Dashboard → API на unjailedai.com", url: "https://unjailedai.com/dashboard" },
+    keyHint: "Баланс и тариф сайт отдаёт только после входа: после добавления нажмите «Войти на сайт» на вкладке.",
+  },
+  opencode: {
+    title: "OpenCode",
+    desc: "Бесплатные модели Zen",
+    auth: "local",
+  },
   chatgpt: {
     title: "ChatGPT",
     desc: "Лимиты подписки (Codex)",
@@ -54,8 +66,8 @@ export const KINDS = {
     auth: "oauth",
   },
 };
-export const KIND_ORDER = ["oneprovider", "nanogpt", "chatgpt", "claude", "antigravity"];
-export const isGateway = (k) => k === "oneprovider" || k === "nanogpt";
+export const KIND_ORDER = ["oneprovider", "nanogpt", "unjailed", "chatgpt", "claude", "antigravity", "opencode"];
+export const isGateway = (k) => k === "oneprovider" || k === "nanogpt" || k === "unjailed";
 
 const svg = (body, sw = 2) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
@@ -63,6 +75,8 @@ const svg = (body, sw = 2) =>
 export const PROVIDER_ICONS = {
   oneprovider: svg('<path d="M9.5 8.5 13 6v12"/><path d="M9.5 18h7"/>', 2.3),
   nanogpt: svg('<path d="M7 18V6l10 12V6"/>', 2.3),
+  unjailed: svg('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.6-1.7"/>', 2.1),
+  opencode: svg('<path d="m8 8-4 4 4 4"/><path d="m16 8 4 4-4 4"/>', 2.3),
   chatgpt: svg('<path d="M12 2.8 20 7.4v9.2l-8 4.6-8-4.6V7.4z"/><path d="M12 7.5v9M8.1 9.75l7.8 4.5M15.9 9.75l-7.8 4.5"/>', 1.9),
   claude: svg('<path d="M12 3.5v17M3.5 12h17M6 6l12 12M18 6 6 18"/>', 2.2),
   antigravity: svg('<path d="M3.5 20C5.5 10.5 8.3 4.5 12 4.5S18.5 10.5 20.5 20"/><path d="M8.5 20c1-3.6 2.1-5.5 3.5-5.5s2.5 1.9 3.5 5.5"/>', 2.1),
@@ -80,6 +94,7 @@ export const ICONS = {
   plus: svg('<path d="M12 5v14M5 12h14"/>'),
   external: svg('<path d="M14 4h6v6"/><path d="M20 4 11 13"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>', 1.8),
   edit: svg('<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>', 1.8),
+  logout: svg('<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5"/><path d="M5 12h11"/>', 1.8),
   trash: svg('<path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/>', 1.8),
   eye: svg('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>', 1.8),
   alert: svg('<path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17.5v.01"/>', 2),
@@ -245,4 +260,16 @@ export function animateIn(root) {
     if (Math.abs(from - to) < 1e-9) render(to);
     else tween(from, to, 800, render);
   });
+}
+
+/** Compact summary of OpenCode free-model usage for list rows. */
+export function freeSummary(s) {
+  const models = (s.free && s.free.models) || [];
+  const lim = models.filter((m) => m.limited);
+  const n5 = models.reduce((a, m) => a + m.requests_5h, 0);
+  if (lim.length) {
+    const reset = lim.map((m) => m.limited_until).filter(Boolean).sort()[0];
+    return { value: "Лимит", cls: "error", sub: reset ? "сброс " + until(reset) : lim.map((m) => m.id).join(", "), reset };
+  }
+  return { value: String(n5), cls: "ok", sub: "запросов за 5 ч" };
 }

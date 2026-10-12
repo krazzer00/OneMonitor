@@ -1,5 +1,5 @@
 import {
-  api, esc, KINDS, isGateway, pi, LOGO, money, until, level, bindingLimit, STATE_TEXT, overall, tick, applyLook,
+  api, esc, KINDS, isGateway, freeSummary, pi, LOGO, money, until, level, bindingLimit, STATE_TEXT, overall, tick, applyLook,
 } from "./shared.js";
 
 const $ = (s) => document.querySelector(s);
@@ -34,6 +34,10 @@ function row(s) {
     sub = `<span title="${esc(s.error)}">${esc(s.error.slice(0, 28))}</span>`;
   } else if (!s.updated_at) {
     value = "…"; sub = "<span>проверка</span>";
+  } else if (s.kind === "opencode") {
+    const f = freeSummary(s);
+    value = f.value; vcls = f.cls;
+    sub = f.reset ? `<span data-until="${f.reset}">${esc(until(f.reset))}</span>` : `<span>${esc(f.sub)}</span>`;
   } else if (isGateway(s.kind) && !(s.limits || []).length) {
     const svc = s.service;
     if (s.balance) {
@@ -66,7 +70,7 @@ function row(s) {
   const who = s.email && s.email !== s.label
     ? s.email
     : s.label === k.title || s.label.startsWith(k.title + " ")
-      ? (isGateway(s.kind) ? s.plan || "Шлюз" : s.plan || k.title)
+      ? (s.kind === "opencode" ? "бесплатные модели" : isGateway(s.kind) ? s.plan || "Шлюз" : s.plan || k.title)
       : [k.title, s.plan].filter(Boolean).join(" · ");
   return `<div class="prow" data-id="${esc(s.id)}">${pi(s.kind)}
     <div class="who"><div class="l">${esc(s.label)}</div><div class="s">${esc(who)}</div></div>

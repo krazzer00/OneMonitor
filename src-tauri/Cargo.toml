@@ -1,7 +1,7 @@
 [package]
 name = "onemonitor"
-version = "0.2.4"
-description = "Tray monitor for OneProvider / NanoGPT status & balance and ChatGPT / Claude / Antigravity / NanoGPT subscription limits"
+version = "0.2.5"
+description = "Tray monitor for OneProvider / NanoGPT / Unjailed AI status & balance, ChatGPT / Claude / Antigravity / NanoGPT subscription limits and OpenCode free models"
 authors = ["OneMonitor"]
 license = "MIT"
 edition = "2021"
@@ -39,6 +39,8 @@ url = "2"
 dirs = "6"
 futures = "0.3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# reads the local OpenCode history (opencode.db)
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

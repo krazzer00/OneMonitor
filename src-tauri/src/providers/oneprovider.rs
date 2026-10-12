@@ -370,6 +370,7 @@ fn parse_families(v: &Value, now: i64) -> Vec<Component> {
                 state,
                 recent,
                 granularity: String::new(),
+                latency_s: None,
             })
         })
         .collect()
